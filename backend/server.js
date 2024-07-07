@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const path = require('path');
-require('dotenv').config(); // Add this line to load environment variables from .env file
+require('dotenv').config(); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
