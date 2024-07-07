@@ -6,6 +6,6 @@
     "build": "cd frontend && npm install && npm run build"
   },
   "engines": {
-    "node": "14.x"
+    "node": "20.15.0"
   }
 }
