@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const path = require('path');
-require('dotenv').config(); 
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,9 +13,14 @@ app.use(bodyParser.json());
 
 // MongoDB connection
 const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/rentalConsultation';
-mongoose.connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true, serverSelectionTimeoutMS: 45000, socketTimeoutMS: 45000 })
-  .then(() => console.log('MongoDB connected...'))
-  .catch(err => console.error('MongoDB connection error:', err));
+mongoose.connect(mongoURI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,  // Adjust the timeout as needed
+  socketTimeoutMS: 45000,          // Adjust the timeout as needed
+})
+.then(() => console.log('MongoDB connected...'))
+.catch(err => console.error('MongoDB connection error:', err));
 
 const ConsultationSchema = new mongoose.Schema({
   customerName: String,
