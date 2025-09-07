@@ -1,6 +1,6 @@
-// api/lookup.js  — READ-ONLY lookups, defensive against bad/missing env
+// api/lookup.js — GET-only, crash-proof, diagnostics enabled
 
-// ---------- URL helpers ----------
+// ---------- helpers ----------
 function normalizeBase(u) {
   if (!u) return "";
   let s = String(u).trim();
@@ -11,7 +11,7 @@ function normalizeBase(u) {
 }
 function safeUrl(base, path, qs) {
   const b = normalizeBase(base);
-  if (!b) return null; // no base -> cannot build
+  if (!b) return null;
   try {
     const u = new URL(b + (path.startsWith("/") ? path : "/" + path));
     if (qs && typeof qs === "object") {
@@ -25,17 +25,22 @@ function safeUrl(base, path, qs) {
     return null;
   }
 }
-
-// ---------- DOB normalization ----------
+async function safeJson(resp) {
+  // Try JSON; if not JSON, return { _nonjson: 'first 200 chars' } for debugging
+  const ct = resp.headers.get("content-type") || "";
+  if (/application\/json/i.test(ct)) return await resp.json();
+  const txt = await resp.text();
+  return { _nonjson: txt.slice(0, 200) };
+}
 function toIsoDob(input) {
   if (!input) return "";
   const s = String(input).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;            // ISO
-  if (/^\d{8}$/.test(s)) {                                // YYYYMMDD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{8}$/.test(s)) {
     const yyyy = s.slice(0,4), mm = s.slice(4,6), dd = s.slice(6,8);
     return `${yyyy}-${mm}-${dd}`;
   }
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);   // MM/DD/YYYY
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const [, mm, dd, yyyy] = m;
     return `${yyyy}-${String(mm).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
@@ -50,6 +55,7 @@ function toYyyymmdd(iso) {
   return `${yyyy}${mm}${dd}`;
 }
 
+// ---------- handler ----------
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -60,10 +66,13 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-    const base = process.env.LS_BASE_URL;   // e.g. https://helmsv.retail.lightspeed.app or .../api/2.0
+    const base = process.env.LS_BASE_URL;
     const token = process.env.LS_TOKEN;
 
-    // ---- DIAGNOSTIC GUARD: if env missing, return safe JSON so client can proceed ----
+    // Log once per invocation for sanity
+    console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
+
+    // If envs are missing, return a safe "new" response (don’t crash)
     if (!base || !token) {
       console.warn("Lightspeed env missing: LS_BASE_URL or LS_TOKEN not set; returning NEW without lookup");
       return res.status(200).json({
@@ -72,62 +81,53 @@ module.exports = async (req, res) => {
         first_name, last_name, email,
         mobile: "",
         date_of_birth: "",
-        dob_yyyymmdd: "",  // client will fallback to 19050101
+        dob_yyyymmdd: "",
         street: "", city: "", state: "", postcode: "", country: ""
       });
     }
 
-    // --- replace ONLY the lookup section in your current file with this ---
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    let customer = null;
 
-const base = process.env.LS_BASE_URL;
-const token = process.env.LS_TOKEN;
-const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-
-let customer = null;
-
-// 1) Try email via /search (2.0)
-try {
-  const emailUrl = safeUrl(base, "/search", { type: "customers", email });
-  if (emailUrl) {
-    const r = await fetch(emailUrl, { headers });
-    if (r.ok) {
-      const data = await r.json();
-      // Results can come back as { customers: [...] } on 2.0 search
-      const arr = Array.isArray(data?.customers) ? data.customers : [];
-      if (arr.length > 0) {
-        // prefer exact email match (case-insensitive)
-        customer =
-          arr.find(c => (c.email || "").toLowerCase() === email.toLowerCase()) ||
-          arr[0];
+    // 1) Search by email (API 2.0 uses /search)
+    try {
+      const emailUrl = safeUrl(base, "/search", { type: "customers", email });
+      console.log("Search by email URL:", emailUrl);
+      if (emailUrl) {
+        const r = await fetch(emailUrl, { headers });
+        console.log("Search by email status:", r.status);
+        const data = await safeJson(r);
+        if (!r.ok) console.error("Search by email body:", data);
+        const arr = Array.isArray(data?.customers) ? data.customers : [];
+        if (arr.length > 0) {
+          customer =
+            arr.find(c => (c.email || "").toLowerCase() === email.toLowerCase()) ||
+            arr[0];
+        }
       }
-    } else {
-      console.error("Search by email HTTP", r.status, await r.text().catch(()=>""));
+    } catch (err) {
+      console.error("Search by email error:", err);
     }
-  }
-} catch (err) {
-  console.error("Search by email error:", err);
-}
 
-// 2) Fallback: first + last name via /search (2.0)
-if (!customer) {
-  try {
-    const nameUrl = safeUrl(base, "/search", { type: "customers", first_name, last_name });
-    if (nameUrl) {
-      const r2 = await fetch(nameUrl, { headers });
-      if (r2.ok) {
-        const data2 = await r2.json();
-        const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
-        if (arr2.length > 0) customer = arr2[0];
-      } else {
-        console.error("Search by name HTTP", r2.status, await r2.text().catch(()=>""));
+    // 2) Fallback: search by name
+    if (!customer) {
+      try {
+        const nameUrl = safeUrl(base, "/search", { type: "customers", first_name, last_name });
+        console.log("Search by name URL:", nameUrl);
+        if (nameUrl) {
+          const r2 = await fetch(nameUrl, { headers });
+          console.log("Search by name status:", r2.status);
+          const data2 = await safeJson(r2);
+          if (!r2.ok) console.error("Search by name body:", data2);
+          const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
+          if (arr2.length > 0) customer = arr2[0];
+        }
+      } catch (err) {
+        console.error("Search by name error:", err);
       }
     }
-  } catch (err) {
-    console.error("Search by name error:", err);
-  }
-}
 
-    // Map & normalize (READ-ONLY; no create)
+    // Map output (no creation; read-only)
     const rawDob =
       customer?.date_of_birth ||
       customer?.dob ||
@@ -150,7 +150,7 @@ if (!customer) {
       email: customer?.email || email,
       mobile: customer?.mobile || customer?.phone || "",
       date_of_birth: dobIso,
-      dob_yyyymmdd: dobYyyymmdd,    // client will fallback to 19050101 if empty
+      dob_yyyymmdd: dobYyyymmdd, // client will fallback to 19050101 if empty
       street: customer?.street || customer?.physical_address?.street || "",
       city: customer?.city || customer?.physical_address?.city || "",
       state: customer?.state || customer?.physical_address?.state || "",
@@ -160,9 +160,9 @@ if (!customer) {
 
     return res.status(200).json(out);
   } catch (e) {
+    // FINAL CATCH: never crash
     console.error("lookup fatal:", e);
     const b = req.body || {};
-    // Always return valid JSON so the client never sees "Failed to load response data"
     return res.status(200).json({
       match_quality: "new",
       lightspeed_id: "",
@@ -172,11 +172,7 @@ if (!customer) {
       mobile: "",
       date_of_birth: "",
       dob_yyyymmdd: "",
-      street: "",
-      city: "",
-      state: "",
-      postcode: "",
-      country: ""
+      street: "", city: "", state: "", postcode: "", country: ""
     });
   }
 };
