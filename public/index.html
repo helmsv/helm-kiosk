@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Helm Rentals — Start Waiver</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-full bg-gray-50 text-gray-900">
+    <main class="mx-auto max-w-xl p-6 pt-12">
+      <div class="bg-white shadow-xl rounded-2xl p-8">
+        <div class="text-center mb-8">
+          <h1 class="text-2xl font-bold">Welcome to Helm of Sun Valley Rentals</h1>
+          <p class="text-gray-600 mt-2">Enter your details to start your waiver.</p>
+        </div>
+        <form id="startForm" class="space-y-5">
+          <div>
+            <label class="block text-sm font-medium">First Name</label>
+            <input id="firstName" required autocomplete="given-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium">Last Name</label>
+            <input id="lastName" required autocomplete="family-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium">Email</label>
+            <input id="email" type="email" required autocomplete="email" class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+          </div>
+          <button id="continueBtn" type="submit" class="w-full rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">Continue</button>
+        </form>
+      </div>
+    </main>
+  </body>
+</html>
