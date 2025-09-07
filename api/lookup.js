@@ -1,4 +1,4 @@
-// api/lookup.js — Lightspeed X-Series 2.0 search, read-only, robust
+// api/lookup.js — Lightspeed X-Series 2.0 search, read-only, robust & defensive
 
 // ---------- helpers ----------
 function normalizeBase(u) {
@@ -6,7 +6,6 @@ function normalizeBase(u) {
   let s = String(u).trim();
   if (!/^https?:\/\//i.test(s)) s = "https://" + s;   // ensure scheme
   s = s.replace(/\/+$/,"");                            // trim trailing slashes
-  // allow either raw tenant base or already /api/2.0
   if (!/\/api\/2\.0$/i.test(s)) s = s + "/api/2.0";    // ensure /api/2.0
   return s;
 }
@@ -55,19 +54,22 @@ function toYyyymmdd(iso) {
   return `${yyyy}${mm}${dd}`;
 }
 
-// ---------- handler ----------
+// ---------- main handler ----------
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const body = req.body || {};
-    const { first_name, last_name, email } = body;
+    const first_name = (body.first_name || "").trim();
+    const last_name  = (body.last_name  || "").trim();
+    const email      = (body.email      || "").trim();
+
     if (!first_name || !last_name || !email) {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-    const base = process.env.LS_BASE_URL;   // ex: https://helmsv.retail.lightspeed.app  (with or without /api/2.0)
-    const token = process.env.LS_TOKEN;
+    const base  = process.env.LS_BASE_URL;   // e.g. https://helmsv.retail.lightspeed.app (with or without /api/2.0)
+    const token = process.env.LS_TOKEN;      // raw token string (NO "Bearer " prefix here)
 
     console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
 
@@ -87,72 +89,55 @@ module.exports = async (req, res) => {
 
     const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-    // normalize inputs for matching
-    const emailQ = (email || "").trim();
-    const emailLc = emailQ.toLowerCase();
-    const fnQ = (first_name || "").trim();
-    const lnQ = (last_name || "").trim();
-
     let customer = null;
+    const emailLc = email.toLowerCase();
 
-    // --- EXACT URL per your reference: /api/2.0/search?type=customers&email=<encoded> ---
+    async function tryEndpoint(desc, path, qs) {
+      const u = safeUrl(base, path, qs);
+      console.log(`${desc} URL:`, u);
+      if (!u) return [];
+      const r = await fetch(u, { headers });
+      console.log(`${desc} status:`, r.status);
+      const data = await safeJson(r);
+      if (!r.ok) console.error(`${desc} body:`, data);
+      const arr = Array.isArray(data?.customers) ? data.customers
+                : Array.isArray(data) ? data
+                : [];
+      console.log(`${desc} results:`, arr.length);
+      return arr;
+    }
+
+    // --- 1) Exact email search (per LS reference) ---
     try {
-      const emailUrl = safeUrl(base, "/search", { type: "customers", email: emailQ });
-      console.log("Search by email URL:", emailUrl);
-      if (emailUrl) {
-        const r = await fetch(emailUrl, { headers });
-        console.log("Search by email status:", r.status);
-        const data = await safeJson(r);
-        if (!r.ok) console.error("Search by email body:", data);
-        const arr = Array.isArray(data?.customers) ? data.customers : [];
-        console.log("Search by email results:", arr.length);
-        if (arr.length > 0) {
-          customer =
-            arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-            arr[0];
-        }
+      const byEmail = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
+      if (byEmail.length) {
+        customer =
+          byEmail.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+          byEmail[0];
       }
-    } catch (err) { console.error("Search by email error:", err); }
+    } catch (e) { console.error("Search(email) error:", e); }
 
-    // Fallback 1: /api/2.0/search?type=customers&first_name=&last_name=
-    if (!customer && (fnQ || lnQ)) {
+    // --- 2) Fallback: first + last name ---
+    if (!customer && (first_name || last_name)) {
       try {
-        const nameUrl = safeUrl(base, "/search", { type: "customers", first_name: fnQ, last_name: lnQ });
-        console.log("Search by name URL:", nameUrl);
-        if (nameUrl) {
-          const r2 = await fetch(nameUrl, { headers });
-          console.log("Search by name status:", r2.status);
-          const data2 = await safeJson(r2);
-          if (!r2.ok) console.error("Search by name body:", data2);
-          const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
-          console.log("Search by name results:", arr2.length);
-          if (arr2.length > 0) customer = arr2[0];
-        }
-      } catch (err) { console.error("Search by name error:", err); }
+        const byName = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
+        if (byName.length) customer = byName[0];
+      } catch (e) { console.error("Search(name) error:", e); }
     }
 
-    // Fallback 2: generic 'q' search some tenants prefer
-    if (!customer && emailQ) {
+    // --- 3) Fallback: generic q (some tenants prefer this) ---
+    if (!customer && email) {
       try {
-        const qUrl = safeUrl(base, "/search", { type: "customers", q: emailQ });
-        console.log("Search by q URL:", qUrl);
-        if (qUrl) {
-          const r3 = await fetch(qUrl, { headers });
-          console.log("Search by q status:", r3.status);
-          const data3 = await safeJson(r3);
-          if (!r3.ok) console.error("Search by q body:", data3);
-          const arr3 = Array.isArray(data3?.customers) ? data3.customers : [];
-          console.log("Search by q results:", arr3.length);
-          if (arr3.length > 0) {
-            customer =
-              arr3.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-              arr3[0];
-          }
+        const byQ = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
+        if (byQ.length) {
+          customer =
+            byQ.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+            byQ[0];
         }
-      } catch (err) { console.error("Search by q error:", err); }
+      } catch (e) { console.error("Search(q) error:", e); }
     }
 
-    // Map output (no creation; read-only)
+    // ----- Map output (no creation; read-only) -----
     const rawDob =
       customer?.date_of_birth ||
       customer?.dob ||
@@ -160,8 +145,8 @@ module.exports = async (req, res) => {
       customer?.custom?.dob ||
       "";
 
-    const dobIso = toIsoDob(rawDob);
-    const dobYyyymmdd = toYyyymmdd(dobIso);
+    const dobIso       = toIsoDob(rawDob);
+    const dobYyyymmdd  = toYyyymmdd(dobIso);
 
     // Try multiple possible ID fields to be safe
     const idCandidate =
@@ -182,28 +167,29 @@ module.exports = async (req, res) => {
       match_quality,
       lightspeed_id: String(idCandidate || ""),
       first_name: customer?.first_name || first_name,
-      last_name: customer?.last_name || last_name,
-      email: customer?.email || email,
-      mobile: customer?.mobile || customer?.phone || "",
+      last_name:  customer?.last_name  || last_name,
+      email:      customer?.email      || email,
+      mobile:     customer?.mobile     || customer?.phone || "",
       date_of_birth: dobIso,
-      dob_yyyymmdd: dobYyyymmdd,   // client will fallback to 19050101 if empty
-      street: customer?.street || customer?.physical_address?.street || "",
-      city: customer?.city || customer?.physical_address?.city || "",
-      state: customer?.state || customer?.physical_address?.state || "",
+      dob_yyyymmdd:  dobYyyymmdd,   // client will fallback to 19050101 if empty
+      street:   customer?.street || customer?.physical_address?.street || "",
+      city:     customer?.city   || customer?.physical_address?.city   || "",
+      state:    customer?.state  || customer?.physical_address?.state  || "",
       postcode: customer?.postcode || customer?.physical_address?.postal_code || "",
-      country: customer?.country || customer?.physical_address?.country || ""
+      country:  customer?.country  || customer?.physical_address?.country     || ""
     };
 
     return res.status(200).json(out);
   } catch (e) {
+    // FINAL CATCH: never crash the function
     console.error("lookup fatal:", e);
     const b = req.body || {};
     return res.status(200).json({
       match_quality: "new",
       lightspeed_id: "",
-      first_name: b.first_name,
-      last_name: b.last_name,
-      email: b.email,
+      first_name: b.first_name || "",
+      last_name:  b.last_name  || "",
+      email:      b.email      || "",
       mobile: "",
       date_of_birth: "",
       dob_yyyymmdd: "",
