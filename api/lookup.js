@@ -1,4 +1,4 @@
-// api/lookup.js — Lightspeed X-Series 2.0 search, read-only, robust & defensive
+// api/lookup.js — Crash-proof Lightspeed X-Series 2.0 lookup (GET-only)
 
 // ---------- helpers ----------
 function normalizeBase(u) {
@@ -21,15 +21,19 @@ function safeUrl(base, path, qs) {
     }
     return u.toString();
   } catch (e) {
-    console.error("URL build error:", e);
+    console.error("URL build error:", e?.message || e);
     return null;
   }
 }
 async function safeJson(resp) {
-  const ct = resp.headers.get("content-type") || "";
-  if (/application\/json/i.test(ct)) return await resp.json();
-  const txt = await resp.text();
-  return { _nonjson: txt.slice(0, 300) };
+  try {
+    const ct = resp.headers.get("content-type") || "";
+    if (/application\/json/i.test(ct)) return await resp.json();
+    const txt = await resp.text();
+    return { _nonjson: String(txt).slice(0, 300) };
+  } catch (e) {
+    return { _parse_error: String(e?.message || e) };
+  }
 }
 function toIsoDob(input) {
   if (!input) return "";
@@ -53,13 +57,28 @@ function toYyyymmdd(iso) {
   const [, yyyy, mm, dd] = m;
   return `${yyyy}${mm}${dd}`;
 }
+// fetch with timeout
+async function fetchTO(url, opts = {}, ms = 10000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ac.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
 
 // ---------- main handler ----------
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const body = req.body || {};
+    // Body can arrive as object or JSON string depending on deploy/runtime
+    let body = req.body ?? {};
+    if (typeof body === "string") {
+      try { body = JSON.parse(body); } catch (_) { body = {}; }
+    }
+
     const first_name = (body.first_name || "").trim();
     const last_name  = (body.last_name  || "").trim();
     const email      = (body.email      || "").trim();
@@ -68,8 +87,8 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-    const base  = process.env.LS_BASE_URL;   // e.g. https://helmsv.retail.lightspeed.app (with or without /api/2.0)
-    const token = process.env.LS_TOKEN;      // raw token string (NO "Bearer " prefix here)
+    const base  = process.env.LS_BASE_URL;
+    const token = process.env.LS_TOKEN; // raw token (no "Bearer ")
 
     console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
 
@@ -87,91 +106,64 @@ module.exports = async (req, res) => {
       });
     }
 
-    // --- BEGIN LOOKUP BLOCK ---
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-const base = process.env.LS_BASE_URL;
-const token = process.env.LS_TOKEN;
-const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    let customer = null;
+    const emailLc = email.toLowerCase();
 
-let customer = null;
-
-const emailQ = (email || "").trim();
-const emailLc = emailQ.toLowerCase();
-const fnQ = (first_name || "").trim();
-const lnQ = (last_name || "").trim();
-
-// 0) Log retailer (one-time diag)
-try {
-  const rret = await fetch(safeUrl(base, "/retailers"), { headers });
-  console.log("Retailer status:", rret.status);
-  const retData = await safeJson(rret);
-  console.log("Retailer peek:", JSON.stringify(retData).slice(0, 160));
-} catch (e) {
-  console.error("Retailer check error:", e);
-}
-
-async function tryEndpoint(desc, path, qs) {
-  const u = safeUrl(base, path, qs);
-  console.log(`${desc} URL:`, u);
-  if (!u) return [];
-  const r = await fetch(u, { headers });
-  console.log(`${desc} status:`, r.status);
-  const data = await safeJson(r);
-  if (!r.ok) console.error(`${desc} body:`, data);
-  const arr = Array.isArray(data?.customers) ? data.customers
-            : Array.isArray(data) ? data
-            : [];
-  console.log(`${desc} results:`, arr.length);
-  return arr;
-}
-
-// 1) Exact email (per docs)
-try {
-  const byEmail = await tryEndpoint("Search(email)", "/search", { type: "customers", email: emailQ });
-  if (byEmail.length) {
-    customer =
-      byEmail.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-      byEmail[0];
-  }
-} catch (e) { console.error("Search(email) error:", e); }
-
-// 2) Name fallback
-if (!customer && (fnQ || lnQ)) {
-  try {
-    const byName = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name: fnQ, last_name: lnQ });
-    if (byName.length) customer = byName[0];
-  } catch (e) { console.error("Search(name) error:", e); }
-}
-
-// 3) Generic q (many tenants match this well)
-if (!customer && emailQ) {
-  try {
-    const byQ = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: emailQ });
-    if (byQ.length) {
-      customer =
-        byQ.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-        byQ[0];
+    async function tryEndpoint(desc, path, qs) {
+      const u = safeUrl(base, path, qs);
+      console.log(`${desc} URL:`, u);
+      if (!u) return [];
+      try {
+        const r = await fetchTO(u, { headers }, 12000);
+        console.log(`${desc} status:`, r.status);
+        const data = await safeJson(r);
+        if (!r.ok) console.error(`${desc} body:`, data);
+        const arr = Array.isArray(data?.customers) ? data.customers
+                  : Array.isArray(data) ? data
+                  : [];
+        console.log(`${desc} results:`, arr.length);
+        return arr;
+      } catch (e) {
+        console.error(`${desc} fetch error:`, e?.name === 'AbortError' ? 'Timeout' : (e?.message || e));
+        return [];
+      }
     }
-  } catch (e) { console.error("Search(q) error:", e); }
-}
 
-// 4) Mobile / phone fallback (if you have it later)
-if (!customer && body.mobile) {
-  try {
-    const byMob = await tryEndpoint("Search(mobile)", "/search", { type: "customers", mobile: String(body.mobile).trim() });
-    if (byMob.length) customer = byMob[0];
-  } catch (e) { console.error("Search(mobile) error:", e); }
-}
+    // (0) Optional: verify retailer for diagnostics; never throw
+    try {
+      const rret = await fetchTO(safeUrl(base, "/retailers"), { headers }, 8000);
+      console.log("Retailer status:", rret?.status);
+      const peek = await safeJson(rret);
+      console.log("Retailer peek:", JSON.stringify(peek).slice(0,160));
+    } catch (e) {
+      console.error("Retailer check error:", e?.message || e);
+    }
 
-// 5) Customer code (some retailers use this)
-if (!customer && body.customer_code) {
-  try {
-    const byCode = await tryEndpoint("Search(customer_code)", "/search", { type: "customers", customer_code: String(body.customer_code).trim() });
-    if (byCode.length) customer = byCode[0];
-  } catch (e) { console.error("Search(customer_code) error:", e); }
-}
+    // 1) Exact email search (per LS 2.0 docs)
+    const byEmail = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
+    if (byEmail.length) {
+      customer =
+        byEmail.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+        byEmail[0];
+    }
 
-// --- END LOOKUP BLOCK ---
+    // 2) Name fallback
+    if (!customer && (first_name || last_name)) {
+      const byName = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
+      if (byName.length) customer = byName[0];
+    }
+
+    // 3) Generic q fallback (some tenants)
+    if (!customer && email) {
+      const byQ = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
+      if (byQ.length) {
+        customer =
+          byQ.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+          byQ[0];
+      }
+    }
 
     // ----- Map output (no creation; read-only) -----
     const rawDob =
@@ -184,7 +176,7 @@ if (!customer && body.customer_code) {
     const dobIso       = toIsoDob(rawDob);
     const dobYyyymmdd  = toYyyymmdd(dobIso);
 
-    // Try multiple possible ID fields to be safe
+    // Robust ID detection (tenants differ)
     const idCandidate =
       customer?.id ??
       customer?.customer_id ??
@@ -199,7 +191,7 @@ if (!customer && body.customer_code) {
       ? (customer.email && customer.email.trim().toLowerCase() === emailLc ? "exact" : "partial")
       : "new";
 
-    const out = {
+    return res.status(200).json({
       match_quality,
       lightspeed_id: String(idCandidate || ""),
       first_name: customer?.first_name || first_name,
@@ -207,25 +199,24 @@ if (!customer && body.customer_code) {
       email:      customer?.email      || email,
       mobile:     customer?.mobile     || customer?.phone || "",
       date_of_birth: dobIso,
-      dob_yyyymmdd:  dobYyyymmdd,   // client will fallback to 19050101 if empty
+      dob_yyyymmdd:  dobYyyymmdd, // client will fallback to 19050101 if empty
       street:   customer?.street || customer?.physical_address?.street || "",
       city:     customer?.city   || customer?.physical_address?.city   || "",
       state:    customer?.state  || customer?.physical_address?.state  || "",
       postcode: customer?.postcode || customer?.physical_address?.postal_code || "",
       country:  customer?.country  || customer?.physical_address?.country     || ""
-    };
+    });
 
-    return res.status(200).json(out);
   } catch (e) {
     // FINAL CATCH: never crash the function
-    console.error("lookup fatal:", e);
-    const b = req.body || {};
+    console.error("lookup fatal:", e?.message || e);
+    // Fall back to "new" so the kiosk can continue
     return res.status(200).json({
       match_quality: "new",
       lightspeed_id: "",
-      first_name: b.first_name || "",
-      last_name:  b.last_name  || "",
-      email:      b.email      || "",
+      first_name: "",
+      last_name:  "",
+      email:      "",
       mobile: "",
       date_of_birth: "",
       dob_yyyymmdd: "",
