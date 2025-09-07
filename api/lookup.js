@@ -1,12 +1,10 @@
 // api/lookup.js — Crash-proof Lightspeed X-Series 2.0 lookup (GET-only) with flexible result extraction
-
-// ---------- helpers ----------
 function normalizeBase(u) {
   if (!u) return "";
   let s = String(u).trim();
-  if (!/^https?:\/\//i.test(s)) s = "https://" + s;   // ensure scheme
-  s = s.replace(/\/+$/,"");                            // trim trailing slashes
-  if (!/\/api\/2\.0$/i.test(s)) s = s + "/api/2.0";    // ensure /api/2.0
+  if (!/^https?:\/\//i.test(s)) s = "https://" + s;
+  s = s.replace(/\/+$/,"");
+  if (!/\/api\/2\.0$/i.test(s)) s = s + "/api/2.0";
   return s;
 }
 function safeUrl(base, path, qs) {
@@ -28,7 +26,7 @@ function safeUrl(base, path, qs) {
 async function safeJson(resp) {
   try {
     const ct = resp.headers.get("content-type") || "";
-    if (/json/i.test(ct)) return await resp.json(); // accept application/json or vendor JSON
+    if (/json/i.test(ct)) return await resp.json();
     const txt = await resp.text();
     return { _nonjson: String(txt).slice(0, 300) };
   } catch (e) {
@@ -38,12 +36,12 @@ async function safeJson(resp) {
 function toIsoDob(input) {
   if (!input) return "";
   const s = String(input).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;          // ISO
-  if (/^\d{8}$/.test(s)) {                               // YYYYMMDD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{8}$/.test(s)) {
     const yyyy = s.slice(0,4), mm = s.slice(4,6), dd = s.slice(6,8);
     return `${yyyy}-${mm}-${dd}`;
   }
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);  // MM/DD/YYYY
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const [, mm, dd, yyyy] = m;
     return `${yyyy}-${String(mm).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
@@ -66,56 +64,46 @@ async function fetchTO(url, opts = {}, ms = 10000) {
     clearTimeout(t);
   }
 }
-
-// Extract customers from various API shapes
+// Flexible customer extractor (handles multiple API shapes)
 function extractCustomers(payload) {
-  // Short-circuit if payload clearly isn’t JSON data
   if (!payload || typeof payload !== "object") return { arr: [], shape: "none" };
-
-  // Candidate paths in priority order
   const candidates = [
-    { path: "customers",            arr: payload?.customers },
-    { path: "data.customers",       arr: payload?.data?.customers },
-    { path: "customers.data",       arr: payload?.customers?.data },
-    { path: "data",                 arr: payload?.data },
-    { path: "results",              arr: payload?.results },
+    { path: "customers",      arr: payload?.customers },
+    { path: "data.customers", arr: payload?.data?.customers },
+    { path: "customers.data", arr: payload?.customers?.data },
+    { path: "data",           arr: payload?.data },
+    { path: "results",        arr: payload?.results },
   ];
-
   for (const c of candidates) {
     if (Array.isArray(c.arr)) return { arr: c.arr, shape: c.path };
   }
-
-  // Some APIs return a single object instead of an array
   if (payload?.customer && typeof payload.customer === "object") {
     return { arr: [payload.customer], shape: "customer" };
   }
   if (payload?.data?.customer && typeof payload.data.customer === "object") {
     return { arr: [payload.data.customer], shape: "data.customer" };
   }
-
   return { arr: [], shape: "unknown" };
 }
 
-// ---------- main handler ----------
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    // Parse body safely (may arrive as string)
     let body = req.body ?? {};
     if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
 
+    // ✅ Email-only is allowed now
     const first_name = (body.first_name || "").trim();
     const last_name  = (body.last_name  || "").trim();
     const email      = (body.email      || "").trim();
 
-    if (!first_name || !last_name || !email) {
-      return res.status(400).json({ error: "Missing fields" });
+    if (!email) {
+      return res.status(400).json({ error: "Missing email" });
     }
 
     const base  = process.env.LS_BASE_URL;
     const token = process.env.LS_TOKEN; // raw token (no "Bearer ")
-
     console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
 
     if (!base || !token) {
@@ -155,7 +143,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // (0) Retailer diag
+    // (0) Retailer diag (safe)
     try {
       const rr = await fetchTO(safeUrl(base, "/retailers"), { headers }, 8000);
       console.log("Retailer status:", rr?.status);
@@ -163,7 +151,7 @@ module.exports = async (req, res) => {
       console.log("Retailer peek:", JSON.stringify(peek).slice(0,160));
     } catch (e) { console.error("Retailer check error:", e?.message || e); }
 
-    // 1) /search?type=customers&email=...
+    // 1) Primary: /search by email
     const r1 = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
     if (r1.arr.length) {
       customer =
@@ -171,14 +159,13 @@ module.exports = async (req, res) => {
         r1.arr[0];
     }
 
-    // 2) /search?type=customers&first_name=&last_name=
+    // 2) Fallbacks only if names were provided (optional)
     if (!customer && (first_name || last_name)) {
       const r2 = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
       if (r2.arr.length) customer = r2.arr[0];
     }
 
-    // 3) /search?type=customers&q=<email>
-    if (!customer && email) {
+    if (!customer) {
       const r3 = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
       if (r3.arr.length) {
         customer =
@@ -187,19 +174,14 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 4) /customers?search=<email or "fn ln"> (legacy)
     if (!customer) {
-      const term = email || `${first_name} ${last_name}`.trim();
-      const r4 = await tryEndpoint("Customers(search)", "/customers", { search: term });
+      const r4 = await tryEndpoint("Customers(search)", "/customers", { search: email });
       if (r4.arr.length) {
-        customer = email
-          ? (r4.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r4.arr[0])
-          : r4.arr[0];
+        customer = r4.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r4.arr[0];
       }
     }
 
-    // 5) /customers?email=<email> (some stacks)
-    if (!customer && email) {
+    if (!customer) {
       const r5 = await tryEndpoint("Customers(email)", "/customers", { email });
       if (r5.arr.length) {
         customer = r5.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r5.arr[0];
@@ -217,7 +199,6 @@ module.exports = async (req, res) => {
     const dobIso       = toIsoDob(rawDob);
     const dobYyyymmdd  = toYyyymmdd(dobIso);
 
-    // Robust ID detection
     const idCandidate =
       customer?.id ??
       customer?.customer_id ??
@@ -235,8 +216,8 @@ module.exports = async (req, res) => {
     return res.status(200).json({
       match_quality,
       lightspeed_id: String(idCandidate || ""),
-      first_name: customer?.first_name || first_name,
-      last_name:  customer?.last_name  || last_name,
+      first_name: customer?.first_name || first_name || "",
+      last_name:  customer?.last_name  || last_name  || "",
       email:      customer?.email      || email,
       mobile:     customer?.mobile     || customer?.phone || "",
       date_of_birth: dobIso,
