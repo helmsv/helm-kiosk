@@ -1,4 +1,4 @@
-// api/lookup.js — Crash-proof Lightspeed X-Series 2.0 lookup (GET-only)
+// api/lookup.js — Crash-proof Lightspeed X-Series 2.0 lookup (GET-only) with flexible result extraction
 
 // ---------- helpers ----------
 function normalizeBase(u) {
@@ -28,7 +28,7 @@ function safeUrl(base, path, qs) {
 async function safeJson(resp) {
   try {
     const ct = resp.headers.get("content-type") || "";
-    if (/application\/json/i.test(ct)) return await resp.json();
+    if (/json/i.test(ct)) return await resp.json(); // accept application/json or vendor JSON
     const txt = await resp.text();
     return { _nonjson: String(txt).slice(0, 300) };
   } catch (e) {
@@ -57,7 +57,6 @@ function toYyyymmdd(iso) {
   const [, yyyy, mm, dd] = m;
   return `${yyyy}${mm}${dd}`;
 }
-// fetch with timeout
 async function fetchTO(url, opts = {}, ms = 10000) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), ms);
@@ -68,11 +67,41 @@ async function fetchTO(url, opts = {}, ms = 10000) {
   }
 }
 
+// Extract customers from various API shapes
+function extractCustomers(payload) {
+  // Short-circuit if payload clearly isn’t JSON data
+  if (!payload || typeof payload !== "object") return { arr: [], shape: "none" };
+
+  // Candidate paths in priority order
+  const candidates = [
+    { path: "customers",            arr: payload?.customers },
+    { path: "data.customers",       arr: payload?.data?.customers },
+    { path: "customers.data",       arr: payload?.customers?.data },
+    { path: "data",                 arr: payload?.data },
+    { path: "results",              arr: payload?.results },
+  ];
+
+  for (const c of candidates) {
+    if (Array.isArray(c.arr)) return { arr: c.arr, shape: c.path };
+  }
+
+  // Some APIs return a single object instead of an array
+  if (payload?.customer && typeof payload.customer === "object") {
+    return { arr: [payload.customer], shape: "customer" };
+  }
+  if (payload?.data?.customer && typeof payload.data.customer === "object") {
+    return { arr: [payload.data.customer], shape: "data.customer" };
+  }
+
+  return { arr: [], shape: "unknown" };
+}
+
 // ---------- main handler ----------
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
+    // Parse body safely (may arrive as string)
     let body = req.body ?? {};
     if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
 
@@ -109,37 +138,37 @@ module.exports = async (req, res) => {
     async function tryEndpoint(desc, path, qs) {
       const u = safeUrl(base, path, qs);
       console.log(`${desc} URL:`, u);
-      if (!u) return { arr: [], peek: null, status: null };
+      if (!u) return { arr: [], status: null, shape: "invalid", peek: null };
       try {
         const r = await fetchTO(u, { headers }, 12000);
         const status = r.status;
         const data = await safeJson(r);
-        const arr = Array.isArray(data?.customers) ? data.customers
-                 : Array.isArray(data) ? data
-                 : [];
-        const peek = JSON.stringify(data).slice(0, 200);
+        const { arr, shape } = extractCustomers(data);
+        const peek = JSON.stringify(data).slice(0, 220);
         console.log(`${desc} status:`, status);
-        console.log(`${desc} results:`, arr.length);
+        console.log(`${desc} shape:`, shape, "| results:", arr.length);
         if (!arr.length && status === 200) console.log(`${desc} peek:`, peek);
-        return { arr, status, peek };
+        return { arr, status, shape, peek };
       } catch (e) {
         console.error(`${desc} fetch error:`, e?.name === 'AbortError' ? 'Timeout' : (e?.message || e));
-        return { arr: [], status: null, peek: null };
+        return { arr: [], status: null, shape: "error", peek: null };
       }
     }
 
     // (0) Retailer diag
     try {
-      const rr = await fetchTO(safeUrl(base, "/retailer"), { headers }, 8000);
+      const rr = await fetchTO(safeUrl(base, "/retailers"), { headers }, 8000);
       console.log("Retailer status:", rr?.status);
       const peek = await safeJson(rr);
       console.log("Retailer peek:", JSON.stringify(peek).slice(0,160));
     } catch (e) { console.error("Retailer check error:", e?.message || e); }
 
     // 1) /search?type=customers&email=...
-    let r1 = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
+    const r1 = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
     if (r1.arr.length) {
-      customer = r1.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r1.arr[0];
+      customer =
+        r1.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+        r1.arr[0];
     }
 
     // 2) /search?type=customers&first_name=&last_name=
@@ -152,11 +181,13 @@ module.exports = async (req, res) => {
     if (!customer && email) {
       const r3 = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
       if (r3.arr.length) {
-        customer = r3.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r3.arr[0];
+        customer =
+          r3.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+          r3.arr[0];
       }
     }
 
-    // 4) /customers?search=<email or "fn ln">  (legacy Vend-style)
+    // 4) /customers?search=<email or "fn ln"> (legacy)
     if (!customer) {
       const term = email || `${first_name} ${last_name}`.trim();
       const r4 = await tryEndpoint("Customers(search)", "/customers", { search: term });
@@ -167,7 +198,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 5) /customers?email=<email> (supported on some stacks)
+    // 5) /customers?email=<email> (some stacks)
     if (!customer && email) {
       const r5 = await tryEndpoint("Customers(email)", "/customers", { email });
       if (r5.arr.length) {
@@ -186,6 +217,7 @@ module.exports = async (req, res) => {
     const dobIso       = toIsoDob(rawDob);
     const dobYyyymmdd  = toYyyymmdd(dobIso);
 
+    // Robust ID detection
     const idCandidate =
       customer?.id ??
       customer?.customer_id ??
