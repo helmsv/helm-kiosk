@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       html, body { height: 100%; }
-      .keypad-input::-webkit-outer-spin-button, 
+      .keypad-input::-webkit-outer-spin-button,
       .keypad-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
   </head>
@@ -57,8 +57,9 @@
     </main>
 
     <script>
-      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // e.g. '1234567890'
-      const THANK_YOU_URL = "/thankyou.html"; // your hosted thanks page
+      // Use your SmartWaiver INTAKE template ID
+      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v";
+      const THANK_YOU_URL = "/thankyou.html"; // optional if you configure redirect in Smartwaiver
 
       const form = document.getElementById('startForm');
       const statusEl = document.getElementById('status');
@@ -69,27 +70,49 @@
       let lastLookup = null;
 
       function setStatus(msg){
-        statusEl.textContent = msg; statusEl.classList.remove('hidden');
+        statusEl.textContent = msg;
+        statusEl.classList.remove('hidden');
+      }
+      function clearStatus(){
+        statusEl.classList.add('hidden');
+        statusEl.textContent='';
       }
 
-      function clearStatus(){ statusEl.classList.add('hidden'); statusEl.textContent=''; }
+      // Convert ISO "YYYY-MM-DD" -> "YYYYMMDD"
+      function isoToYyyymmdd(iso) {
+        if (!iso) return "";
+        const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) return "";
+        const [, yyyy, mm, dd] = m;
+        return `${yyyy}${mm}${dd}`;
+      }
 
+      // Build Smartwaiver Autofill URL (kiosk) with required DOB fallback
       function buildAutofillUrl(d){
+        // DOB priority:
+        // 1) dob_yyyymmdd from API
+        // 2) convert ISO date_of_birth to YYYYMMDD
+        // 3) fallback dummy "19050101"
+        const dobYyyymmdd =
+          (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : "") ||
+          isoToYyyymmdd(d.date_of_birth || "") ||
+          "19050101";
+
         const p = new URLSearchParams();
-        if (d.first_name) p.set('autofill_firstname', d.first_name);
-        if (d.last_name)  p.set('autofill_lastname',  d.last_name);
-        if (d.email)      p.set('autofill_email',     d.email);
-        if (d.date_of_birth) p.set('autofill_dob', d.date_of_birth); // YYYY-MM-DD
-        if (d.mobile)     p.set('autofill_phone',     d.mobile);
-        if (d.street)     p.set('autofill_address',   d.street);
-        if (d.city)       p.set('autofill_city',      d.city);
-        if (d.postcode)   p.set('autofill_zip',       d.postcode);
-        if (d.state)      p.set('autofill_state',     d.state);
-        if (d.country)    p.set('autofill_country',   d.country);
-        if (d.lightspeed_id) p.set('tag', `ls_${d.lightspeed_id}`);
-        // optional: return URL to thank-you page after submission, if you’ve set up SmartWaiver redirect
-        // p.set('redirect', THANK_YOU_URL);
-        return `https://www.smartwaiver.com/w/${WAIVER_ID}/?${p.toString()}`;
+
+        // Smartwaiver recognizes ONLY these wautofill_* for adult autofill
+        if (d.first_name) p.set('wautofill_firstname', d.first_name);
+        if (d.last_name)  p.set('wautofill_lastname',  d.last_name);
+        p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
+
+        // Tag with Lightspeed customer ID for matching (persists across redirects)
+        if (d.lightspeed_id) p.set('wautofill_tag', `ls_${d.lightspeed_id}`);
+
+        // Phone is allowed in some templates; safe to pass if you have it
+        if (d.mobile) p.set('wautofill_phone', d.mobile);
+
+        // Kiosk path for iPad flow
+        return `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
       }
 
       form.addEventListener('submit', async (e) => {
@@ -97,12 +120,22 @@
         const first_name = document.getElementById('firstName').value.trim();
         const last_name  = document.getElementById('lastName').value.trim();
         const email      = document.getElementById('email').value.trim();
+
         setStatus('Looking up your record…');
+
         try {
-          const res = await fetch('/api/lookup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ first_name, last_name, email }) });
+          const res = await fetch('/api/lookup', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ first_name, last_name, email })
+          });
           if (!res.ok) throw new Error('Lookup failed');
           const data = await res.json();
-          lastLookup = data; // { match_quality: 'exact'|'partial'|'new', ...customer fields }
+
+          // Expecting shape including:
+          // { match_quality, lightspeed_id, first_name, last_name, email, mobile, date_of_birth, dob_yyyymmdd, ... }
+          lastLookup = data;
+
           if (data.match_quality === 'exact' || data.match_quality === 'partial') {
             document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim();
             document.getElementById('c_email').textContent = data.email || '—';
@@ -111,15 +144,23 @@
             confirmCard.classList.remove('hidden');
             clearStatus();
           } else {
-            // new record case: go straight to waiver with the info we have
-            const url = buildAutofillUrl(data);
+            // New record: go straight to Intake with what we have (DOB will fallback if missing)
+            const url = buildAutofillUrl({
+              first_name, last_name, email,
+              // mobile intentionally omitted unless you capture it on the form
+              date_of_birth: "", // none
+              dob_yyyymmdd: ""   // will fallback to dummy
+            });
             window.location.href = url;
           }
         } catch (err) {
           console.error(err);
           setStatus('Could not look up your record. Starting a fresh waiver…');
-          // fallback: go directly with entered fields
-          const url = buildAutofillUrl({ first_name, last_name, email });
+          // Fallback: go directly with entered fields (DOB will fallback)
+          const url = buildAutofillUrl({
+            first_name, last_name, email,
+            date_of_birth: "", dob_yyyymmdd: ""
+          });
           window.location.href = url;
         }
       });
@@ -135,10 +176,9 @@
         const first_name = document.getElementById('firstName').value.trim();
         const last_name  = document.getElementById('lastName').value.trim();
         const email      = document.getElementById('email').value.trim();
-        const url = buildAutofillUrl({ first_name, last_name, email });
+        const url = buildAutofillUrl({ first_name, last_name, email, date_of_birth: "", dob_yyyymmdd: "" });
         window.location.href = url;
       });
     </script>
   </body>
 </html>
-```
