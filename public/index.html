@@ -1,3 +1,6 @@
+## public/index.html
+
+```html
 <!doctype html>
 <html lang="en">
   <head>
@@ -5,6 +8,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Helm Rentals — Start Waiver</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html, body { height: 100%; }
+      .keypad-input::-webkit-outer-spin-button, 
+      .keypad-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
   </head>
   <body class="min-h-full bg-gray-50 text-gray-900">
     <main class="mx-auto max-w-xl p-6 pt-12">
@@ -13,22 +21,127 @@
           <h1 class="text-2xl font-bold">Welcome to Helm of Sun Valley Rentals</h1>
           <p class="text-gray-600 mt-2">Enter your details to start your waiver.</p>
         </div>
+
         <form id="startForm" class="space-y-5">
           <div>
             <label class="block text-sm font-medium">First Name</label>
-            <input id="firstName" required autocomplete="given-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+            <input id="firstName" required autocomplete="given-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
           <div>
             <label class="block text-sm font-medium">Last Name</label>
-            <input id="lastName" required autocomplete="family-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+            <input id="lastName" required autocomplete="family-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
           <div>
             <label class="block text-sm font-medium">Email</label>
-            <input id="email" type="email" required autocomplete="email" class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+            <input id="email" type="email" required autocomplete="email" class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
+
           <button id="continueBtn" type="submit" class="w-full rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">Continue</button>
         </form>
+
+        <div id="status" class="hidden mt-6 text-center text-sm text-gray-600"></div>
+
+        <div id="confirmCard" class="hidden mt-6 border border-gray-200 rounded-2xl p-5">
+          <h2 class="text-lg font-semibold">We found your record</h2>
+          <p class="text-sm text-gray-600 mt-1">Please confirm your information.</p>
+          <dl class="mt-4 grid grid-cols-1 gap-3">
+            <div><dt class="text-xs text-gray-500">Name</dt><dd id="c_name" class="font-medium"></dd></div>
+            <div><dt class="text-xs text-gray-500">Email</dt><dd id="c_email" class="font-medium"></dd></div>
+            <div><dt class="text-xs text-gray-500">Mobile</dt><dd id="c_phone" class="font-medium"></dd></div>
+            <div><dt class="text-xs text-gray-500">DOB</dt><dd id="c_dob" class="font-medium"></dd></div>
+          </dl>
+          <div class="mt-5 flex gap-3">
+            <button id="btnYes" class="flex-1 rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">Yes, that's me</button>
+            <button id="btnNotMe" class="flex-1 rounded-xl bg-gray-200 text-gray-900 py-3 font-semibold hover:bg-gray-300">Not me</button>
+          </div>
+        </div>
+
       </div>
     </main>
+
+    <script>
+      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // e.g. '1234567890'
+      const THANK_YOU_URL = "/thankyou.html"; // your hosted thanks page
+
+      const form = document.getElementById('startForm');
+      const statusEl = document.getElementById('status');
+      const confirmCard = document.getElementById('confirmCard');
+      const btnYes = document.getElementById('btnYes');
+      const btnNotMe = document.getElementById('btnNotMe');
+
+      let lastLookup = null;
+
+      function setStatus(msg){
+        statusEl.textContent = msg; statusEl.classList.remove('hidden');
+      }
+
+      function clearStatus(){ statusEl.classList.add('hidden'); statusEl.textContent=''; }
+
+      function buildAutofillUrl(d){
+        const p = new URLSearchParams();
+        if (d.first_name) p.set('autofill_firstname', d.first_name);
+        if (d.last_name)  p.set('autofill_lastname',  d.last_name);
+        if (d.email)      p.set('autofill_email',     d.email);
+        if (d.date_of_birth) p.set('autofill_dob', d.date_of_birth); // YYYY-MM-DD
+        if (d.mobile)     p.set('autofill_phone',     d.mobile);
+        if (d.street)     p.set('autofill_address',   d.street);
+        if (d.city)       p.set('autofill_city',      d.city);
+        if (d.postcode)   p.set('autofill_zip',       d.postcode);
+        if (d.state)      p.set('autofill_state',     d.state);
+        if (d.country)    p.set('autofill_country',   d.country);
+        if (d.lightspeed_id) p.set('tag', `ls_${d.lightspeed_id}`);
+        // optional: return URL to thank-you page after submission, if you’ve set up SmartWaiver redirect
+        // p.set('redirect', THANK_YOU_URL);
+        return `https://www.smartwaiver.com/w/${WAIVER_ID}/?${p.toString()}`;
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault(); clearStatus(); confirmCard.classList.add('hidden');
+        const first_name = document.getElementById('firstName').value.trim();
+        const last_name  = document.getElementById('lastName').value.trim();
+        const email      = document.getElementById('email').value.trim();
+        setStatus('Looking up your record…');
+        try {
+          const res = await fetch('/api/lookup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ first_name, last_name, email }) });
+          if (!res.ok) throw new Error('Lookup failed');
+          const data = await res.json();
+          lastLookup = data; // { match_quality: 'exact'|'partial'|'new', ...customer fields }
+          if (data.match_quality === 'exact' || data.match_quality === 'partial') {
+            document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+            document.getElementById('c_email').textContent = data.email || '—';
+            document.getElementById('c_phone').textContent = data.mobile || '—';
+            document.getElementById('c_dob').textContent = data.date_of_birth || '—';
+            confirmCard.classList.remove('hidden');
+            clearStatus();
+          } else {
+            // new record case: go straight to waiver with the info we have
+            const url = buildAutofillUrl(data);
+            window.location.href = url;
+          }
+        } catch (err) {
+          console.error(err);
+          setStatus('Could not look up your record. Starting a fresh waiver…');
+          // fallback: go directly with entered fields
+          const url = buildAutofillUrl({ first_name, last_name, email });
+          window.location.href = url;
+        }
+      });
+
+      btnYes?.addEventListener('click', () => {
+        if (!lastLookup) return;
+        const url = buildAutofillUrl(lastLookup);
+        window.location.href = url;
+      });
+
+      btnNotMe?.addEventListener('click', () => {
+        // If not me, start with only typed values (no DOB/phone/address)
+        const first_name = document.getElementById('firstName').value.trim();
+        const last_name  = document.getElementById('lastName').value.trim();
+        const email      = document.getElementById('email').value.trim();
+        const url = buildAutofillUrl({ first_name, last_name, email });
+        window.location.href = url;
+      });
+    </script>
   </body>
 </html>
+```
