@@ -77,52 +77,55 @@ module.exports = async (req, res) => {
       });
     }
 
-    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-    let customer = null;
+    // --- replace ONLY the lookup section in your current file with this ---
 
-    // 1) Try email lookup
-    try {
-      const emailUrl = safeUrl(base, "/customers", { email });
-      if (emailUrl) {
-        const r = await fetch(emailUrl, { headers });
-        if (r.ok) {
-          const data = await r.json();
-          if (Array.isArray(data?.customers) && data.customers.length > 0) {
-            customer =
-              data.customers.find(c => (c.email || "").toLowerCase() === email.toLowerCase()) ||
-              data.customers[0];
-          }
-        } else {
-          console.error("Email lookup HTTP", r.status, await r.text().catch(()=>""));
-        }
+const base = process.env.LS_BASE_URL;
+const token = process.env.LS_TOKEN;
+const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+let customer = null;
+
+// 1) Try email via /search (2.0)
+try {
+  const emailUrl = safeUrl(base, "/search", { type: "customers", email });
+  if (emailUrl) {
+    const r = await fetch(emailUrl, { headers });
+    if (r.ok) {
+      const data = await r.json();
+      // Results can come back as { customers: [...] } on 2.0 search
+      const arr = Array.isArray(data?.customers) ? data.customers : [];
+      if (arr.length > 0) {
+        // prefer exact email match (case-insensitive)
+        customer =
+          arr.find(c => (c.email || "").toLowerCase() === email.toLowerCase()) ||
+          arr[0];
+      }
+    } else {
+      console.error("Search by email HTTP", r.status, await r.text().catch(()=>""));
+    }
+  }
+} catch (err) {
+  console.error("Search by email error:", err);
+}
+
+// 2) Fallback: first + last name via /search (2.0)
+if (!customer) {
+  try {
+    const nameUrl = safeUrl(base, "/search", { type: "customers", first_name, last_name });
+    if (nameUrl) {
+      const r2 = await fetch(nameUrl, { headers });
+      if (r2.ok) {
+        const data2 = await r2.json();
+        const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
+        if (arr2.length > 0) customer = arr2[0];
       } else {
-        console.error("Email lookup skipped: invalid base URL");
-      }
-    } catch (err) {
-      console.error("Email lookup error:", err);
-    }
-
-    // 2) Try first + last name
-    if (!customer) {
-      try {
-        const nameUrl = safeUrl(base, "/customers", { first_name, last_name });
-        if (nameUrl) {
-          const r2 = await fetch(nameUrl, { headers });
-          if (r2.ok) {
-            const data2 = await r2.json();
-            if (Array.isArray(data2?.customers) && data2.customers.length > 0) {
-              customer = data2.customers[0];
-            }
-          } else {
-            console.error("Name lookup HTTP", r2.status, await r2.text().catch(()=>""));
-          }
-        } else {
-          console.error("Name lookup skipped: invalid base URL");
-        }
-      } catch (err) {
-        console.error("Name lookup error:", err);
+        console.error("Search by name HTTP", r2.status, await r2.text().catch(()=>""));
       }
     }
+  } catch (err) {
+    console.error("Search by name error:", err);
+  }
+}
 
     // Map & normalize (READ-ONLY; no create)
     const rawDob =
