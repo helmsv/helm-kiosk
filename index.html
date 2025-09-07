@@ -123,46 +123,48 @@
 
         setStatus('Looking up your record…');
 
-        try {
-          const res = await fetch('/api/lookup', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ first_name, last_name, email })
-          });
-          if (!res.ok) throw new Error('Lookup failed');
-          const data = await res.json();
+        // replace your fetch(...) try block with this
+try {
+  const res = await fetch('/api/lookup', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ first_name, last_name, email })
+  });
 
-          // Expecting shape including:
-          // { match_quality, lightspeed_id, first_name, last_name, email, mobile, date_of_birth, dob_yyyymmdd, ... }
-          lastLookup = data;
+  const raw = await res.text();               // <-- read raw body either way
+  console.log('lookup status:', res.status);  // <-- log status
+  console.log('lookup raw:', raw);            // <-- log body (or error page)
 
-          if (data.match_quality === 'exact' || data.match_quality === 'partial') {
-            document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim();
-            document.getElementById('c_email').textContent = data.email || '—';
-            document.getElementById('c_phone').textContent = data.mobile || '—';
-            document.getElementById('c_dob').textContent = data.date_of_birth || '—';
-            confirmCard.classList.remove('hidden');
-            clearStatus();
-          } else {
-            // New record: go straight to Intake with what we have (DOB will fallback if missing)
-            const url = buildAutofillUrl({
-              first_name, last_name, email,
-              // mobile intentionally omitted unless you capture it on the form
-              date_of_birth: "", // none
-              dob_yyyymmdd: ""   // will fallback to dummy
-            });
-            window.location.href = url;
-          }
-        } catch (err) {
-          console.error(err);
-          setStatus('Could not look up your record. Starting a fresh waiver…');
-          // Fallback: go directly with entered fields (DOB will fallback)
-          const url = buildAutofillUrl({
-            first_name, last_name, email,
-            date_of_birth: "", dob_yyyymmdd: ""
-          });
-          window.location.href = url;
-        }
+  if (!res.ok) {
+    throw new Error(`Lookup failed: ${res.status} ${res.statusText}`);
+  }
+
+  // try to parse JSON
+  let data;
+  try { data = JSON.parse(raw); }
+  catch { throw new Error('Lookup returned non-JSON'); }
+
+  lastLookup = data;
+  if (data.match_quality === 'exact' || data.match_quality === 'partial') {
+    document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+    document.getElementById('c_email').textContent = data.email || '—';
+    document.getElementById('c_phone').textContent = data.mobile || '—';
+    document.getElementById('c_dob').textContent = data.date_of_birth || '—';
+    confirmCard.classList.remove('hidden');
+    clearStatus();
+  } else {
+    const url = buildAutofillUrl({
+      first_name, last_name, email,
+      date_of_birth: "", dob_yyyymmdd: ""
+    });
+    window.location.href = url;
+  }
+} catch (err) {
+  console.error('lookup error:', err);
+  setStatus('Lookup error. Starting a fresh waiver…');
+  const url = buildAutofillUrl({ first_name, last_name, email, date_of_birth: "", dob_yyyymmdd: "" });
+  window.location.href = url;
+}
       });
 
       btnYes?.addEventListener('click', () => {
