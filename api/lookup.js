@@ -73,11 +73,8 @@ module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    // Body can arrive as object or JSON string depending on deploy/runtime
     let body = req.body ?? {};
-    if (typeof body === "string") {
-      try { body = JSON.parse(body); } catch (_) { body = {}; }
-    }
+    if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
 
     const first_name = (body.first_name || "").trim();
     const last_name  = (body.last_name  || "").trim();
@@ -92,7 +89,6 @@ module.exports = async (req, res) => {
 
     console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
 
-    // If envs missing, return safe NEW so client can proceed with dummy DOB
     if (!base || !token) {
       console.warn("Lightspeed env missing; returning NEW without lookup");
       return res.status(200).json({
@@ -107,65 +103,79 @@ module.exports = async (req, res) => {
     }
 
     const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-
     let customer = null;
     const emailLc = email.toLowerCase();
 
     async function tryEndpoint(desc, path, qs) {
       const u = safeUrl(base, path, qs);
       console.log(`${desc} URL:`, u);
-      if (!u) return [];
+      if (!u) return { arr: [], peek: null, status: null };
       try {
         const r = await fetchTO(u, { headers }, 12000);
-        console.log(`${desc} status:`, r.status);
+        const status = r.status;
         const data = await safeJson(r);
-        if (!r.ok) console.error(`${desc} body:`, data);
         const arr = Array.isArray(data?.customers) ? data.customers
-                  : Array.isArray(data) ? data
-                  : [];
+                 : Array.isArray(data) ? data
+                 : [];
+        const peek = JSON.stringify(data).slice(0, 200);
+        console.log(`${desc} status:`, status);
         console.log(`${desc} results:`, arr.length);
-        return arr;
+        if (!arr.length && status === 200) console.log(`${desc} peek:`, peek);
+        return { arr, status, peek };
       } catch (e) {
         console.error(`${desc} fetch error:`, e?.name === 'AbortError' ? 'Timeout' : (e?.message || e));
-        return [];
+        return { arr: [], status: null, peek: null };
       }
     }
 
-    // (0) Optional: verify retailer for diagnostics; never throw
+    // (0) Retailer diag
     try {
-      const rret = await fetchTO(safeUrl(base, "/retailer"), { headers }, 8000);
-      console.log("Retailer status:", rret?.status);
-      const peek = await safeJson(rret);
+      const rr = await fetchTO(safeUrl(base, "/retailers"), { headers }, 8000);
+      console.log("Retailer status:", rr?.status);
+      const peek = await safeJson(rr);
       console.log("Retailer peek:", JSON.stringify(peek).slice(0,160));
-    } catch (e) {
-      console.error("Retailer check error:", e?.message || e);
+    } catch (e) { console.error("Retailer check error:", e?.message || e); }
+
+    // 1) /search?type=customers&email=...
+    let r1 = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
+    if (r1.arr.length) {
+      customer = r1.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r1.arr[0];
     }
 
-    // 1) Exact email search (per LS 2.0 docs)
-    const byEmail = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
-    if (byEmail.length) {
-      customer =
-        byEmail.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-        byEmail[0];
-    }
-
-    // 2) Name fallback
+    // 2) /search?type=customers&first_name=&last_name=
     if (!customer && (first_name || last_name)) {
-      const byName = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
-      if (byName.length) customer = byName[0];
+      const r2 = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
+      if (r2.arr.length) customer = r2.arr[0];
     }
 
-    // 3) Generic q fallback (some tenants)
+    // 3) /search?type=customers&q=<email>
     if (!customer && email) {
-      const byQ = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
-      if (byQ.length) {
-        customer =
-          byQ.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-          byQ[0];
+      const r3 = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
+      if (r3.arr.length) {
+        customer = r3.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r3.arr[0];
       }
     }
 
-    // ----- Map output (no creation; read-only) -----
+    // 4) /customers?search=<email or "fn ln">  (legacy Vend-style)
+    if (!customer) {
+      const term = email || `${first_name} ${last_name}`.trim();
+      const r4 = await tryEndpoint("Customers(search)", "/customers", { search: term });
+      if (r4.arr.length) {
+        customer = email
+          ? (r4.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r4.arr[0])
+          : r4.arr[0];
+      }
+    }
+
+    // 5) /customers?email=<email> (supported on some stacks)
+    if (!customer && email) {
+      const r5 = await tryEndpoint("Customers(email)", "/customers", { email });
+      if (r5.arr.length) {
+        customer = r5.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r5.arr[0];
+      }
+    }
+
+    // ----- Map output -----
     const rawDob =
       customer?.date_of_birth ||
       customer?.dob ||
@@ -176,7 +186,6 @@ module.exports = async (req, res) => {
     const dobIso       = toIsoDob(rawDob);
     const dobYyyymmdd  = toYyyymmdd(dobIso);
 
-    // Robust ID detection (tenants differ)
     const idCandidate =
       customer?.id ??
       customer?.customer_id ??
@@ -208,15 +217,11 @@ module.exports = async (req, res) => {
     });
 
   } catch (e) {
-    // FINAL CATCH: never crash the function
     console.error("lookup fatal:", e?.message || e);
-    // Fall back to "new" so the kiosk can continue
     return res.status(200).json({
       match_quality: "new",
       lightspeed_id: "",
-      first_name: "",
-      last_name:  "",
-      email:      "",
+      first_name: "", last_name: "", email: "",
       mobile: "",
       date_of_birth: "",
       dob_yyyymmdd: "",
