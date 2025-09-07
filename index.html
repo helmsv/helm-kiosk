@@ -7,8 +7,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       html, body { height: 100%; }
-      .keypad-input::-webkit-outer-spin-button,
-      .keypad-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
   </head>
   <body class="min-h-full bg-gray-50 text-gray-900">
@@ -16,40 +14,55 @@
       <div class="bg-white shadow-xl rounded-2xl p-8">
         <div class="text-center mb-8">
           <h1 class="text-2xl font-bold">Welcome to Helm of Sun Valley Rentals</h1>
-          <p class="text-gray-600 mt-2">Enter your details to start your waiver.</p>
+          <p class="text-gray-600 mt-2">Enter your email to start your waiver.</p>
         </div>
 
+        <!-- EMAIL-ONLY FORM -->
         <form id="startForm" class="space-y-5">
           <div>
-            <label class="block text-sm font-medium">First Name</label>
-            <input id="firstName" required autocomplete="given-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
-          </div>
-          <div>
-            <label class="block text-sm font-medium">Last Name</label>
-            <input id="lastName" required autocomplete="family-name" class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
-          </div>
-          <div>
             <label class="block text-sm font-medium">Email</label>
-            <input id="email" type="email" required autocomplete="email" class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
+            <input id="email" type="email" required autocomplete="email"
+                   class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
 
-          <button id="continueBtn" type="submit" class="w-full rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">Continue</button>
+          <button id="continueBtn" type="submit"
+                  class="w-full rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">
+            Continue
+          </button>
         </form>
 
+        <!-- STATUS -->
         <div id="status" class="hidden mt-6 text-center text-sm text-gray-600"></div>
 
+        <!-- CONFIRM CARD (shown if Lightspeed match found) -->
         <div id="confirmCard" class="hidden mt-6 border border-gray-200 rounded-2xl p-5">
           <h2 class="text-lg font-semibold">We found your record</h2>
           <p class="text-sm text-gray-600 mt-1">Please confirm your information.</p>
           <dl class="mt-4 grid grid-cols-1 gap-3">
-            <div><dt class="text-xs text-gray-500">Name</dt><dd id="c_name" class="font-medium"></dd></div>
-            <div><dt class="text-xs text-gray-500">Email</dt><dd id="c_email" class="font-medium"></dd></div>
-            <div><dt class="text-xs text-gray-500">Mobile</dt><dd id="c_phone" class="font-medium"></dd></div>
-            <div><dt class="text-xs text-gray-500">DOB</dt><dd id="c_dob" class="font-medium"></dd></div>
+            <div>
+              <dt class="text-xs text-gray-500">Name</dt>
+              <dd id="c_name" class="font-medium"></dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500">Email</dt>
+              <dd id="c_email" class="font-medium"></dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500">Mobile</dt>
+              <dd id="c_phone" class="font-medium"></dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500">DOB</dt>
+              <dd id="c_dob" class="font-medium"></dd>
+            </div>
           </dl>
           <div class="mt-5 flex gap-3">
-            <button id="btnYes" class="flex-1 rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">Yes, that's me</button>
-            <button id="btnNotMe" class="flex-1 rounded-xl bg-gray-200 text-gray-900 py-3 font-semibold hover:bg-gray-300">Not me</button>
+            <button id="btnYes" class="flex-1 rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">
+              Yes, that's me
+            </button>
+            <button id="btnNotMe" class="flex-1 rounded-xl bg-gray-200 text-gray-900 py-3 font-semibold hover:bg-gray-300">
+              Not me
+            </button>
           </div>
         </div>
 
@@ -57,116 +70,116 @@
     </main>
 
     <script>
-      // Use your SmartWaiver INTAKE template ID
-      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v";
-      const THANK_YOU_URL = "/thankyou.html"; // optional if you configure redirect in Smartwaiver
+      // === CONFIG ===
+      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // replace with your Smartwaiver ID
+      // const THANK_YOU_URL = "/thankyou.html";   // optional Smartwaiver redirect target
 
+      // === DOM ===
       const form = document.getElementById('startForm');
       const statusEl = document.getElementById('status');
       const confirmCard = document.getElementById('confirmCard');
       const btnYes = document.getElementById('btnYes');
       const btnNotMe = document.getElementById('btnNotMe');
 
-      let lastLookup = null;
+      let lastLookup = null; // stores the last /api/lookup response object
 
-      function setStatus(msg){
+      // === HELPERS ===
+      function setStatus(msg) {
         statusEl.textContent = msg;
         statusEl.classList.remove('hidden');
       }
-      function clearStatus(){
+      function clearStatus() {
         statusEl.classList.add('hidden');
-        statusEl.textContent='';
+        statusEl.textContent = '';
       }
-
-      // Convert ISO "YYYY-MM-DD" -> "YYYYMMDD"
       function isoToYyyymmdd(iso) {
-        if (!iso) return "";
-        const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (!m) return "";
-        const [, yyyy, mm, dd] = m;
-        return `${yyyy}${mm}${dd}`;
+        const m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        return m ? `${m[1]}${m[2]}${m[3]}` : '';
       }
-
-      // Build Smartwaiver Autofill URL (kiosk) with required DOB fallback
-      function buildAutofillUrl(d){
-        // DOB priority:
-        // 1) dob_yyyymmdd from API
-        // 2) convert ISO date_of_birth to YYYYMMDD
-        // 3) fallback dummy "19300101"
+      function buildAutofillUrl(d) {
+        // DOB required by Smartwaiver autofill — fallback to 19050101 if missing
         const dobYyyymmdd =
-          (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : "") ||
-          isoToYyyymmdd(d.date_of_birth || "") ||
-          "19300101";
+          (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : '') ||
+          isoToYyyymmdd(d.date_of_birth || '') ||
+          '19050101';
 
         const p = new URLSearchParams();
 
-        // Smartwaiver recognizes ONLY these wautofill_* for adult autofill
+        // We only collected email, but if LS returned names, pass them through.
         if (d.first_name) p.set('wautofill_firstname', d.first_name);
         if (d.last_name)  p.set('wautofill_lastname',  d.last_name);
+
+        // Always include email (helps Smartwaiver link back)
+        if (d.email) p.set('wautofill_email', d.email);
+
+        // DOB (required for autofill)
         p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
 
-        // Tag with Lightspeed customer ID for matching (persists across redirects)
-        if (d.lightspeed_id) p.set('wautofill_tag', `ls_${d.lightspeed_id}`);
-
-        // Phone is allowed in some templates; safe to pass if you have it
+        // Optional phone
         if (d.mobile) p.set('wautofill_phone', d.mobile);
 
-        // Kiosk path for iPad flow
-        return `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
+        // Pass Lightspeed ID as tag if present
+        if (d.lightspeed_id) p.set('wautofill_tag', `ls_${d.lightspeed_id}`);
+
+        // Optional: redirect back after completion (enable if configured in Smartwaiver)
+        // p.set('redirect', THANK_YOU_URL);
+
+        const url = `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
+        console.log('WAIVER url:', url);
+        return url;
       }
 
+      // === SUBMIT (email-only lookup) ===
       form.addEventListener('submit', async (e) => {
-        e.preventDefault(); clearStatus(); confirmCard.classList.add('hidden');
-        const first_name = document.getElementById('firstName').value.trim();
-        const last_name  = document.getElementById('lastName').value.trim();
-        const email      = document.getElementById('email').value.trim();
+        e.preventDefault();
+        clearStatus();
+        confirmCard.classList.add('hidden');
+
+        const email = document.getElementById('email').value.trim();
+        if (!email) return;
 
         setStatus('Looking up your record…');
 
-        // replace your fetch(...) try block with this
-try {
-  const res = await fetch('/api/lookup', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ first_name, last_name, email })
-  });
+        try {
+          const res = await fetch('/api/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ first_name: '', last_name: '', email })
+          });
 
-  const raw = await res.text();               // <-- read raw body either way
-  console.log('lookup status:', res.status);  // <-- log status
-  console.log('lookup raw:', raw);            // <-- log body (or error page)
+          const raw = await res.text();
+          console.log('lookup status:', res.status);
+          console.log('lookup body:', raw);
 
-  if (!res.ok) {
-    throw new Error(`Lookup failed: ${res.status} ${res.statusText}`);
-  }
+          if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
 
-  // try to parse JSON
-  let data;
-  try { data = JSON.parse(raw); }
-  catch { throw new Error('Lookup returned non-JSON'); }
+          const data = JSON.parse(raw);
+          lastLookup = data; // { match_quality, lightspeed_id, first_name, last_name, email, ... }
 
-  lastLookup = data;
-  if (data.match_quality === 'exact' || data.match_quality === 'partial') {
-    document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim();
-    document.getElementById('c_email').textContent = data.email || '—';
-    document.getElementById('c_phone').textContent = data.mobile || '—';
-    document.getElementById('c_dob').textContent = data.date_of_birth || '—';
-    confirmCard.classList.remove('hidden');
-    clearStatus();
-  } else {
-    const url = buildAutofillUrl({
-      first_name, last_name, email,
-      date_of_birth: "", dob_yyyymmdd: ""
-    });
-    window.location.href = url;
-  }
-} catch (err) {
-  console.error('lookup error:', err);
-  setStatus('Lookup error. Starting a fresh waiver…');
-  const url = buildAutofillUrl({ first_name, last_name, email, date_of_birth: "", dob_yyyymmdd: "" });
-  window.location.href = url;
-}
+          if (data.match_quality === 'exact' || data.match_quality === 'partial') {
+            // Populate confirmation
+            document.getElementById('c_name').textContent =
+              `${data.first_name || ''} ${data.last_name || ''}`.trim() || '—';
+            document.getElementById('c_email').textContent = data.email || '—';
+            document.getElementById('c_phone').textContent = data.mobile || '—';
+            document.getElementById('c_dob').textContent = data.date_of_birth || '—';
+
+            confirmCard.classList.remove('hidden');
+            clearStatus();
+          } else {
+            // No match → go straight to waiver with email + DOB fallback
+            const url = buildAutofillUrl({ email, dob_yyyymmdd: data.dob_yyyymmdd, date_of_birth: data.date_of_birth });
+            window.location.href = url;
+          }
+        } catch (err) {
+          console.error('lookup error:', err);
+          setStatus('Lookup error. Starting a fresh waiver…');
+          const url = buildAutofillUrl({ email });
+          window.location.href = url;
+        }
       });
 
+      // === CONFIRM BUTTONS ===
       btnYes?.addEventListener('click', () => {
         if (!lastLookup) return;
         const url = buildAutofillUrl(lastLookup);
@@ -174,11 +187,8 @@ try {
       });
 
       btnNotMe?.addEventListener('click', () => {
-        // If not me, start with only typed values (no DOB/phone/address)
-        const first_name = document.getElementById('firstName').value.trim();
-        const last_name  = document.getElementById('lastName').value.trim();
-        const email      = document.getElementById('email').value.trim();
-        const url = buildAutofillUrl({ first_name, last_name, email, date_of_birth: "", dob_yyyymmdd: "" });
+        const email = document.getElementById('email').value.trim();
+        const url = buildAutofillUrl({ email });
         window.location.href = url;
       });
     </script>
