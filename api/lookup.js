@@ -87,55 +87,91 @@ module.exports = async (req, res) => {
       });
     }
 
-    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    // --- BEGIN LOOKUP BLOCK ---
 
-    let customer = null;
-    const emailLc = email.toLowerCase();
+const base = process.env.LS_BASE_URL;
+const token = process.env.LS_TOKEN;
+const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-    async function tryEndpoint(desc, path, qs) {
-      const u = safeUrl(base, path, qs);
-      console.log(`${desc} URL:`, u);
-      if (!u) return [];
-      const r = await fetch(u, { headers });
-      console.log(`${desc} status:`, r.status);
-      const data = await safeJson(r);
-      if (!r.ok) console.error(`${desc} body:`, data);
-      const arr = Array.isArray(data?.customers) ? data.customers
-                : Array.isArray(data) ? data
-                : [];
-      console.log(`${desc} results:`, arr.length);
-      return arr;
+let customer = null;
+
+const emailQ = (email || "").trim();
+const emailLc = emailQ.toLowerCase();
+const fnQ = (first_name || "").trim();
+const lnQ = (last_name || "").trim();
+
+// 0) Log retailer (one-time diag)
+try {
+  const rret = await fetch(safeUrl(base, "/retailers"), { headers });
+  console.log("Retailer status:", rret.status);
+  const retData = await safeJson(rret);
+  console.log("Retailer peek:", JSON.stringify(retData).slice(0, 160));
+} catch (e) {
+  console.error("Retailer check error:", e);
+}
+
+async function tryEndpoint(desc, path, qs) {
+  const u = safeUrl(base, path, qs);
+  console.log(`${desc} URL:`, u);
+  if (!u) return [];
+  const r = await fetch(u, { headers });
+  console.log(`${desc} status:`, r.status);
+  const data = await safeJson(r);
+  if (!r.ok) console.error(`${desc} body:`, data);
+  const arr = Array.isArray(data?.customers) ? data.customers
+            : Array.isArray(data) ? data
+            : [];
+  console.log(`${desc} results:`, arr.length);
+  return arr;
+}
+
+// 1) Exact email (per docs)
+try {
+  const byEmail = await tryEndpoint("Search(email)", "/search", { type: "customers", email: emailQ });
+  if (byEmail.length) {
+    customer =
+      byEmail.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+      byEmail[0];
+  }
+} catch (e) { console.error("Search(email) error:", e); }
+
+// 2) Name fallback
+if (!customer && (fnQ || lnQ)) {
+  try {
+    const byName = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name: fnQ, last_name: lnQ });
+    if (byName.length) customer = byName[0];
+  } catch (e) { console.error("Search(name) error:", e); }
+}
+
+// 3) Generic q (many tenants match this well)
+if (!customer && emailQ) {
+  try {
+    const byQ = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: emailQ });
+    if (byQ.length) {
+      customer =
+        byQ.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+        byQ[0];
     }
+  } catch (e) { console.error("Search(q) error:", e); }
+}
 
-    // --- 1) Exact email search (per LS reference) ---
-    try {
-      const byEmail = await tryEndpoint("Search(email)", "/search", { type: "customers", email });
-      if (byEmail.length) {
-        customer =
-          byEmail.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-          byEmail[0];
-      }
-    } catch (e) { console.error("Search(email) error:", e); }
+// 4) Mobile / phone fallback (if you have it later)
+if (!customer && body.mobile) {
+  try {
+    const byMob = await tryEndpoint("Search(mobile)", "/search", { type: "customers", mobile: String(body.mobile).trim() });
+    if (byMob.length) customer = byMob[0];
+  } catch (e) { console.error("Search(mobile) error:", e); }
+}
 
-    // --- 2) Fallback: first + last name ---
-    if (!customer && (first_name || last_name)) {
-      try {
-        const byName = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
-        if (byName.length) customer = byName[0];
-      } catch (e) { console.error("Search(name) error:", e); }
-    }
+// 5) Customer code (some retailers use this)
+if (!customer && body.customer_code) {
+  try {
+    const byCode = await tryEndpoint("Search(customer_code)", "/search", { type: "customers", customer_code: String(body.customer_code).trim() });
+    if (byCode.length) customer = byCode[0];
+  } catch (e) { console.error("Search(customer_code) error:", e); }
+}
 
-    // --- 3) Fallback: generic q (some tenants prefer this) ---
-    if (!customer && email) {
-      try {
-        const byQ = await tryEndpoint("Search(q=email)", "/search", { type: "customers", q: email });
-        if (byQ.length) {
-          customer =
-            byQ.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-            byQ[0];
-        }
-      } catch (e) { console.error("Search(q) error:", e); }
-    }
+// --- END LOOKUP BLOCK ---
 
     // ----- Map output (no creation; read-only) -----
     const rawDob =
