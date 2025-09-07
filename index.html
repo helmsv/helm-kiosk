@@ -17,13 +17,27 @@
           <p class="text-gray-600 mt-2">Enter your email to start your waiver.</p>
         </div>
 
-        <!-- EMAIL-ONLY FORM -->
+        <!-- EMAIL + MINORS FORM -->
         <form id="startForm" class="space-y-5">
           <div>
             <label class="block text-sm font-medium">Email</label>
             <input id="email" type="email" required autocomplete="email"
                    class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
+
+          <fieldset>
+            <legend class="block text-sm font-medium mb-2">Will any minors use the rented equipment?</legend>
+            <div class="flex items-center gap-6">
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="minors" value="no" id="minorsNo" class="h-4 w-4" checked />
+                <span>No</span>
+              </label>
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="minors" value="yes" id="minorsYes" class="h-4 w-4" />
+                <span>Yes</span>
+              </label>
+            </div>
+          </fieldset>
 
           <button id="continueBtn" type="submit"
                   class="w-full rounded-xl bg-black text-white py-3 font-semibold hover:opacity-90">
@@ -72,7 +86,6 @@
     <script>
       // === CONFIG ===
       const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // replace with your Smartwaiver ID
-      // const THANK_YOU_URL = "/thankyou.html";   // optional Smartwaiver redirect target
 
       // === DOM ===
       const form = document.getElementById('startForm');
@@ -80,6 +93,8 @@
       const confirmCard = document.getElementById('confirmCard');
       const btnYes = document.getElementById('btnYes');
       const btnNotMe = document.getElementById('btnNotMe');
+      const minorsYesEl = document.getElementById('minorsYes');
+      const minorsNoEl  = document.getElementById('minorsNo');
 
       let lastLookup = null; // stores the last /api/lookup response object
 
@@ -96,33 +111,37 @@
         const m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
         return m ? `${m[1]}${m[2]}${m[3]}` : '';
       }
-      function buildAutofillUrl(d) {
-        // DOB required by Smartwaiver autofill — fallback to 19300101 if missing
-        const dobYyyymmdd =
-          (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : '') ||
-          isoToYyyymmdd(d.date_of_birth || '') ||
-          '19300101';
+      function isMinorsYes() {
+        return minorsYesEl.checked;
+      }
 
+      /**
+       * Build Smartwaiver autofill URL.
+       * - If minors = YES → only email + tag
+       * - If minors = NO  → full autofill (names, DOB fallback, phone, tag)
+       */
+      function buildAutofillUrl(d, minorsYes) {
         const p = new URLSearchParams();
 
-        // We only collected email, but if LS returned names, pass them through.
-        if (d.first_name) p.set('wautofill_firstname', d.first_name);
-        if (d.last_name)  p.set('wautofill_lastname',  d.last_name);
-
-        // Always include email (helps Smartwaiver link back)
+        // Always include email if we have it
         if (d.email) p.set('wautofill_email', d.email);
 
-        // DOB (required for autofill)
-        p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
-
-        // Optional phone
-        if (d.mobile) p.set('wautofill_phone', d.mobile);
-
-        // Pass Lightspeed ID as tag if present
+        // Tag with Lightspeed ID if present
         if (d.lightspeed_id) p.set('wautofill_tag', `ls_${d.lightspeed_id}`);
 
-        // Optional: redirect back after completion (enable if configured in Smartwaiver)
-        // p.set('redirect', THANK_YOU_URL);
+        if (!minorsYes) {
+          // Full autofill path (no minors)
+          const dobYyyymmdd =
+            (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : '') ||
+            isoToYyyymmdd(d.date_of_birth || '') ||
+            '19300101';
+
+          if (d.first_name) p.set('wautofill_firstname', d.first_name);
+          if (d.last_name)  p.set('wautofill_lastname',  d.last_name);
+          p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
+          if (d.mobile) p.set('wautofill_phone', d.mobile);
+        }
+        // minorsYes → intentionally DO NOT add name/phone/DOB
 
         const url = `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
         console.log('WAIVER url:', url);
@@ -144,7 +163,7 @@
           const res = await fetch('/api/lookup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ first_name: '', last_name: '', email })
+            body: JSON.stringify({ email }) // email-only server is allowed now
           });
 
           const raw = await res.text();
@@ -156,8 +175,8 @@
           const data = JSON.parse(raw);
           lastLookup = data; // { match_quality, lightspeed_id, first_name, last_name, email, ... }
 
+          // If a LS match was found, allow the user to confirm (unless you prefer to auto-continue)
           if (data.match_quality === 'exact' || data.match_quality === 'partial') {
-            // Populate confirmation
             document.getElementById('c_name').textContent =
               `${data.first_name || ''} ${data.last_name || ''}`.trim() || '—';
             document.getElementById('c_email').textContent = data.email || '—';
@@ -167,14 +186,15 @@
             confirmCard.classList.remove('hidden');
             clearStatus();
           } else {
-            // No match → go straight to waiver with email + DOB fallback
-            const url = buildAutofillUrl({ email, dob_yyyymmdd: data.dob_yyyymmdd, date_of_birth: data.date_of_birth });
+            // No match → go straight to waiver, using minors logic
+            const url = buildAutofillUrl({ email }, isMinorsYes());
             window.location.href = url;
           }
         } catch (err) {
           console.error('lookup error:', err);
           setStatus('Lookup error. Starting a fresh waiver…');
-          const url = buildAutofillUrl({ email });
+          // Fallback: just use email and minors logic
+          const url = buildAutofillUrl({ email }, isMinorsYes());
           window.location.href = url;
         }
       });
@@ -182,13 +202,13 @@
       // === CONFIRM BUTTONS ===
       btnYes?.addEventListener('click', () => {
         if (!lastLookup) return;
-        const url = buildAutofillUrl(lastLookup);
+        const url = buildAutofillUrl(lastLookup, isMinorsYes());
         window.location.href = url;
       });
 
       btnNotMe?.addEventListener('click', () => {
         const email = document.getElementById('email').value.trim();
-        const url = buildAutofillUrl({ email });
+        const url = buildAutofillUrl({ email }, isMinorsYes());
         window.location.href = url;
       });
     </script>

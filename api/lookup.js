@@ -221,7 +221,7 @@ module.exports = async (req, res) => {
       email:      customer?.email      || email,
       mobile:     customer?.mobile     || customer?.phone || "",
       date_of_birth: dobIso,
-      dob_yyyymmdd:  dobYyyymmdd, // client will fallback to 19050101 if empty
+      dob_yyyymmdd:  dobYyyymmdd, // client will fallback to 19300101 if empty
       street:   customer?.street || customer?.physical_address?.street || "",
       city:     customer?.city   || customer?.physical_address?.city   || "",
       state:    customer?.state  || customer?.physical_address?.state  || "",
