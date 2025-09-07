@@ -66,66 +66,59 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-    const base = process.env.LS_BASE_URL;
-    const token = process.env.LS_TOKEN;
+// ---- just the lookup section; keep your helpers as-is ----
+const base = process.env.LS_BASE_URL;
+const token = process.env.LS_TOKEN;
+const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-    // Log once per invocation for sanity
-    console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
+let customer = null;
 
-    // If envs are missing, return a safe "new" response (don’t crash)
-    if (!base || !token) {
-      console.warn("Lightspeed env missing: LS_BASE_URL or LS_TOKEN not set; returning NEW without lookup");
-      return res.status(200).json({
-        match_quality: "new",
-        lightspeed_id: "",
-        first_name, last_name, email,
-        mobile: "",
-        date_of_birth: "",
-        dob_yyyymmdd: "",
-        street: "", city: "", state: "", postcode: "", country: ""
-      });
+// normalize inputs for matching
+const emailQ = (email || "").trim();
+const emailLc = emailQ.toLowerCase();
+const fnQ = (first_name || "").trim();
+const lnQ = (last_name || "").trim();
+
+// 1) Search by email
+try {
+  const emailUrl = safeUrl(base, "/search", { type: "customers", email: emailQ });
+  console.log("Search by email URL:", emailUrl);
+  if (emailUrl) {
+    const r = await fetch(emailUrl, { headers });
+    console.log("Search by email status:", r.status);
+    const data = await safeJson(r);
+    if (!r.ok) console.error("Search by email body:", data);
+    const arr = Array.isArray(data?.customers) ? data.customers : [];
+    console.log("Search by email results:", arr.length);
+    if (arr.length > 0) {
+      // prefer exact email match (case-insensitive, trimmed)
+      customer =
+        arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+        arr[0];
     }
+  }
+} catch (err) {
+  console.error("Search by email error:", err);
+}
 
-    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-    let customer = null;
-
-    // 1) Search by email (API 2.0 uses /search)
-    try {
-      const emailUrl = safeUrl(base, "/search", { type: "customers", email });
-      console.log("Search by email URL:", emailUrl);
-      if (emailUrl) {
-        const r = await fetch(emailUrl, { headers });
-        console.log("Search by email status:", r.status);
-        const data = await safeJson(r);
-        if (!r.ok) console.error("Search by email body:", data);
-        const arr = Array.isArray(data?.customers) ? data.customers : [];
-        if (arr.length > 0) {
-          customer =
-            arr.find(c => (c.email || "").toLowerCase() === email.toLowerCase()) ||
-            arr[0];
-        }
-      }
-    } catch (err) {
-      console.error("Search by email error:", err);
+// 2) Fallback: search by first + last name
+if (!customer && (fnQ || lnQ)) {
+  try {
+    const nameUrl = safeUrl(base, "/search", { type: "customers", first_name: fnQ, last_name: lnQ });
+    console.log("Search by name URL:", nameUrl);
+    if (nameUrl) {
+      const r2 = await fetch(nameUrl, { headers });
+      console.log("Search by name status:", r2.status);
+      const data2 = await safeJson(r2);
+      if (!r2.ok) console.error("Search by name body:", data2);
+      const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
+      console.log("Search by name results:", arr2.length);
+      if (arr2.length > 0) customer = arr2[0];
     }
-
-    // 2) Fallback: search by name
-    if (!customer) {
-      try {
-        const nameUrl = safeUrl(base, "/search", { type: "customers", first_name, last_name });
-        console.log("Search by name URL:", nameUrl);
-        if (nameUrl) {
-          const r2 = await fetch(nameUrl, { headers });
-          console.log("Search by name status:", r2.status);
-          const data2 = await safeJson(r2);
-          if (!r2.ok) console.error("Search by name body:", data2);
-          const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
-          if (arr2.length > 0) customer = arr2[0];
-        }
-      } catch (err) {
-        console.error("Search by name error:", err);
-      }
-    }
+  } catch (err) {
+    console.error("Search by name error:", err);
+  }
+}
 
     // Map output (no creation; read-only)
     const rawDob =
