@@ -130,7 +130,7 @@ module.exports = async (req, res) => {
 
     // (0) Retailer diag
     try {
-      const rr = await fetchTO(safeUrl(base, "/retailers"), { headers }, 8000);
+      const rr = await fetchTO(safeUrl(base, "/retailer"), { headers }, 8000);
       console.log("Retailer status:", rr?.status);
       const peek = await safeJson(rr);
       console.log("Retailer peek:", JSON.stringify(peek).slice(0,160));
