@@ -92,11 +92,11 @@
         // DOB priority:
         // 1) dob_yyyymmdd from API
         // 2) convert ISO date_of_birth to YYYYMMDD
-        // 3) fallback dummy "19050101"
+        // 3) fallback dummy "19300101"
         const dobYyyymmdd =
           (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : "") ||
           isoToYyyymmdd(d.date_of_birth || "") ||
-          "19050101";
+          "19300101";
 
         const p = new URLSearchParams();
 
