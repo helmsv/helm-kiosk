@@ -1,4 +1,4 @@
-// api/lookup.js — GET-only, crash-proof, diagnostics enabled
+// api/lookup.js — Lightspeed X-Series 2.0 search, read-only, robust
 
 // ---------- helpers ----------
 function normalizeBase(u) {
@@ -6,6 +6,7 @@ function normalizeBase(u) {
   let s = String(u).trim();
   if (!/^https?:\/\//i.test(s)) s = "https://" + s;   // ensure scheme
   s = s.replace(/\/+$/,"");                            // trim trailing slashes
+  // allow either raw tenant base or already /api/2.0
   if (!/\/api\/2\.0$/i.test(s)) s = s + "/api/2.0";    // ensure /api/2.0
   return s;
 }
@@ -26,21 +27,20 @@ function safeUrl(base, path, qs) {
   }
 }
 async function safeJson(resp) {
-  // Try JSON; if not JSON, return { _nonjson: 'first 200 chars' } for debugging
   const ct = resp.headers.get("content-type") || "";
   if (/application\/json/i.test(ct)) return await resp.json();
   const txt = await resp.text();
-  return { _nonjson: txt.slice(0, 200) };
+  return { _nonjson: txt.slice(0, 300) };
 }
 function toIsoDob(input) {
   if (!input) return "";
   const s = String(input).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  if (/^\d{8}$/.test(s)) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;          // ISO
+  if (/^\d{8}$/.test(s)) {                               // YYYYMMDD
     const yyyy = s.slice(0,4), mm = s.slice(4,6), dd = s.slice(6,8);
     return `${yyyy}-${mm}-${dd}`;
   }
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);  // MM/DD/YYYY
   if (m) {
     const [, mm, dd, yyyy] = m;
     return `${yyyy}-${String(mm).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
@@ -66,59 +66,91 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-// ---- just the lookup section; keep your helpers as-is ----
-const base = process.env.LS_BASE_URL;
-const token = process.env.LS_TOKEN;
-const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const base = process.env.LS_BASE_URL;   // ex: https://helmsv.retail.lightspeed.app  (with or without /api/2.0)
+    const token = process.env.LS_TOKEN;
 
-let customer = null;
+    console.log("ENV present?", { hasBase: !!base, hasToken: !!token });
 
-// normalize inputs for matching
-const emailQ = (email || "").trim();
-const emailLc = emailQ.toLowerCase();
-const fnQ = (first_name || "").trim();
-const lnQ = (last_name || "").trim();
-
-// 1) Search by email
-try {
-  const emailUrl = safeUrl(base, "/search", { type: "customers", email: emailQ });
-  console.log("Search by email URL:", emailUrl);
-  if (emailUrl) {
-    const r = await fetch(emailUrl, { headers });
-    console.log("Search by email status:", r.status);
-    const data = await safeJson(r);
-    if (!r.ok) console.error("Search by email body:", data);
-    const arr = Array.isArray(data?.customers) ? data.customers : [];
-    console.log("Search by email results:", arr.length);
-    if (arr.length > 0) {
-      // prefer exact email match (case-insensitive, trimmed)
-      customer =
-        arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-        arr[0];
+    // If envs missing, return safe NEW so client can proceed with dummy DOB
+    if (!base || !token) {
+      console.warn("Lightspeed env missing; returning NEW without lookup");
+      return res.status(200).json({
+        match_quality: "new",
+        lightspeed_id: "",
+        first_name, last_name, email,
+        mobile: "",
+        date_of_birth: "",
+        dob_yyyymmdd: "",
+        street: "", city: "", state: "", postcode: "", country: ""
+      });
     }
-  }
-} catch (err) {
-  console.error("Search by email error:", err);
-}
 
-// 2) Fallback: search by first + last name
-if (!customer && (fnQ || lnQ)) {
-  try {
-    const nameUrl = safeUrl(base, "/search", { type: "customers", first_name: fnQ, last_name: lnQ });
-    console.log("Search by name URL:", nameUrl);
-    if (nameUrl) {
-      const r2 = await fetch(nameUrl, { headers });
-      console.log("Search by name status:", r2.status);
-      const data2 = await safeJson(r2);
-      if (!r2.ok) console.error("Search by name body:", data2);
-      const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
-      console.log("Search by name results:", arr2.length);
-      if (arr2.length > 0) customer = arr2[0];
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+    // normalize inputs for matching
+    const emailQ = (email || "").trim();
+    const emailLc = emailQ.toLowerCase();
+    const fnQ = (first_name || "").trim();
+    const lnQ = (last_name || "").trim();
+
+    let customer = null;
+
+    // --- EXACT URL per your reference: /api/2.0/search?type=customers&email=<encoded> ---
+    try {
+      const emailUrl = safeUrl(base, "/search", { type: "customers", email: emailQ });
+      console.log("Search by email URL:", emailUrl);
+      if (emailUrl) {
+        const r = await fetch(emailUrl, { headers });
+        console.log("Search by email status:", r.status);
+        const data = await safeJson(r);
+        if (!r.ok) console.error("Search by email body:", data);
+        const arr = Array.isArray(data?.customers) ? data.customers : [];
+        console.log("Search by email results:", arr.length);
+        if (arr.length > 0) {
+          customer =
+            arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+            arr[0];
+        }
+      }
+    } catch (err) { console.error("Search by email error:", err); }
+
+    // Fallback 1: /api/2.0/search?type=customers&first_name=&last_name=
+    if (!customer && (fnQ || lnQ)) {
+      try {
+        const nameUrl = safeUrl(base, "/search", { type: "customers", first_name: fnQ, last_name: lnQ });
+        console.log("Search by name URL:", nameUrl);
+        if (nameUrl) {
+          const r2 = await fetch(nameUrl, { headers });
+          console.log("Search by name status:", r2.status);
+          const data2 = await safeJson(r2);
+          if (!r2.ok) console.error("Search by name body:", data2);
+          const arr2 = Array.isArray(data2?.customers) ? data2.customers : [];
+          console.log("Search by name results:", arr2.length);
+          if (arr2.length > 0) customer = arr2[0];
+        }
+      } catch (err) { console.error("Search by name error:", err); }
     }
-  } catch (err) {
-    console.error("Search by name error:", err);
-  }
-}
+
+    // Fallback 2: generic 'q' search some tenants prefer
+    if (!customer && emailQ) {
+      try {
+        const qUrl = safeUrl(base, "/search", { type: "customers", q: emailQ });
+        console.log("Search by q URL:", qUrl);
+        if (qUrl) {
+          const r3 = await fetch(qUrl, { headers });
+          console.log("Search by q status:", r3.status);
+          const data3 = await safeJson(r3);
+          if (!r3.ok) console.error("Search by q body:", data3);
+          const arr3 = Array.isArray(data3?.customers) ? data3.customers : [];
+          console.log("Search by q results:", arr3.length);
+          if (arr3.length > 0) {
+            customer =
+              arr3.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
+              arr3[0];
+          }
+        }
+      } catch (err) { console.error("Search by q error:", err); }
+    }
 
     // Map output (no creation; read-only)
     const rawDob =
@@ -131,19 +163,30 @@ if (!customer && (fnQ || lnQ)) {
     const dobIso = toIsoDob(rawDob);
     const dobYyyymmdd = toYyyymmdd(dobIso);
 
+    // Try multiple possible ID fields to be safe
+    const idCandidate =
+      customer?.id ??
+      customer?.customer_id ??
+      customer?.customer?.id ??
+      customer?.customerId ??
+      customer?.uuid ??
+      "";
+
+    console.log("RESOLVED customer id:", idCandidate);
+
     const match_quality = customer
-      ? (customer.email && customer.email.toLowerCase() === email.toLowerCase() ? "exact" : "partial")
+      ? (customer.email && customer.email.trim().toLowerCase() === emailLc ? "exact" : "partial")
       : "new";
 
     const out = {
       match_quality,
-      lightspeed_id: customer?.id || customer?.customer_id || customer?.customer?.id || "",
+      lightspeed_id: String(idCandidate || ""),
       first_name: customer?.first_name || first_name,
       last_name: customer?.last_name || last_name,
       email: customer?.email || email,
       mobile: customer?.mobile || customer?.phone || "",
       date_of_birth: dobIso,
-      dob_yyyymmdd: dobYyyymmdd, // client will fallback to 19050101 if empty
+      dob_yyyymmdd: dobYyyymmdd,   // client will fallback to 19050101 if empty
       street: customer?.street || customer?.physical_address?.street || "",
       city: customer?.city || customer?.physical_address?.city || "",
       state: customer?.state || customer?.physical_address?.state || "",
@@ -153,7 +196,6 @@ if (!customer && (fnQ || lnQ)) {
 
     return res.status(200).json(out);
   } catch (e) {
-    // FINAL CATCH: never crash
     console.error("lookup fatal:", e);
     const b = req.body || {};
     return res.status(200).json({
