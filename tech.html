@@ -16,13 +16,13 @@
   <main class="mx-auto max-w-5xl p-6 pt-10">
     <div class="bg-white shadow-xl rounded-2xl p-6">
       <div class="flex items-center justify-between mb-4">
-        <h1 class="text-2xl font-bold">Customers Needing Liability (Today)</h1>
+        <h1 class="text-2xl font-bold">Customers Needing Liability (Last 24h)</h1>
         <div class="flex items-center gap-3">
           <button id="refreshBtn" class="btn">Refresh</button>
         </div>
       </div>
       <p class="text-sm text-gray-600 mb-4">
-        Shows customers who signed an <strong>Intake</strong> today but do <strong>not</strong> have a <strong>Liability</strong> today (matched by Smartwaiver tag <code>ls_&lt;lightspeed_id&gt;</code>).
+        Shows Intakes in the last 24 hours that have no Liability yet (matched by Smartwaiver tag <code>ls_&lt;lightspeed_id&gt;</code> or, if missing, by email).
       </p>
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
@@ -46,7 +46,7 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 10000;
+    const REFRESH_MS = 30000; // 30s to play nice with Search API rate limits
 
     function fmtTime(s) {
       try { return new Date(s).toLocaleString(); } catch { return s || "—"; }
@@ -81,14 +81,12 @@
         `;
         tb.appendChild(tr);
       }
-      // wire buttons
       tb.querySelectorAll("button[data-email]").forEach(btn => {
         btn.addEventListener("click", () => {
           const email = btn.getAttribute("data-email");
           const lsid  = btn.getAttribute("data-lsid");
           const url = buildLiabilityUrl({ email, lightspeed_id: lsid });
           console.log("LIABILITY URL:", url);
-          // open in a new tab so the dashboard stays put
           window.open(url, "_blank", "noopener");
         });
       });
@@ -108,7 +106,6 @@
 
     document.getElementById("refreshBtn").addEventListener("click", refresh);
 
-    // Boot: fetch liability waiver ID from /api/config, then start refresh loop
     (async () => {
       try {
         const r = await fetch("/api/config");

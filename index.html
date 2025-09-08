@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       html, body { height: 100%; }
+      select { appearance: none; -webkit-appearance: none; }
     </style>
   </head>
   <body class="min-h-full bg-gray-50 text-gray-900">
@@ -14,15 +15,43 @@
       <div class="bg-white shadow-xl rounded-2xl p-8">
         <div class="text-center mb-8">
           <h1 class="text-2xl font-bold">Welcome to Helm of Sun Valley Rentals</h1>
-          <p class="text-gray-600 mt-2">Enter your email to start your waiver.</p>
+          <p class="text-gray-600 mt-2">Enter your details to start your intake waiver.</p>
         </div>
 
-        <!-- EMAIL + MINORS FORM -->
-        <form id="startForm" class="space-y-5">
+        <!-- EMAIL + DOB + MINORS FORM -->
+        <form id="startForm" class="space-y-6">
           <div>
             <label class="block text-sm font-medium">Email</label>
             <input id="email" type="email" required autocomplete="email"
                    class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
+          </div>
+
+          <!-- DOB (required for Smartwaiver autofill; not editable on form) -->
+          <div>
+            <label class="block text-sm font-medium mb-1">Date of Birth</label>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="sr-only" for="dobMonth">Month</label>
+                <select id="dobMonth" required class="w-full rounded-xl border border-gray-300 p-3">
+                  <option value="">Month</option>
+                </select>
+              </div>
+              <div>
+                <label class="sr-only" for="dobDay">Day</label>
+                <select id="dobDay" required class="w-full rounded-xl border border-gray-300 p-3">
+                  <option value="">Day</option>
+                </select>
+              </div>
+              <div>
+                <label class="sr-only" for="dobYear">Year</label>
+                <select id="dobYear" required class="w-full rounded-xl border border-gray-300 p-3">
+                  <option value="">Year</option>
+                </select>
+              </div>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">
+              Your DOB is required to prefill the intake form and can’t be edited on the next screen.
+            </p>
           </div>
 
           <fieldset>
@@ -66,7 +95,7 @@
               <dd id="c_phone" class="font-medium"></dd>
             </div>
             <div>
-              <dt class="text-xs text-gray-500">DOB</dt>
+              <dt class="text-xs text-gray-500">DOB (from Lightspeed)</dt>
               <dd id="c_dob" class="font-medium"></dd>
             </div>
           </dl>
@@ -85,7 +114,7 @@
 
     <script>
       // === CONFIG ===
-      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // replace with your Smartwaiver ID
+      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // replace with your Smartwaiver Intake template ID
 
       // === DOM ===
       const form = document.getElementById('startForm');
@@ -95,8 +124,43 @@
       const btnNotMe = document.getElementById('btnNotMe');
       const minorsYesEl = document.getElementById('minorsYes');
       const minorsNoEl  = document.getElementById('minorsNo');
+      const dobMonthEl = document.getElementById('dobMonth');
+      const dobDayEl   = document.getElementById('dobDay');
+      const dobYearEl  = document.getElementById('dobYear');
 
-      let lastLookup = null; // stores the last /api/lookup response object
+      let lastLookup = null; // stores last /api/lookup response
+
+      // === INIT DROPDOWNS ===
+      (function initDob() {
+        // Months 1..12 with labels
+        const months = [
+          "01 - Jan","02 - Feb","03 - Mar","04 - Apr","05 - May","06 - Jun",
+          "07 - Jul","08 - Aug","09 - Sep","10 - Oct","11 - Nov","12 - Dec"
+        ];
+        months.forEach((m, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i+1).padStart(2,'0');
+          opt.textContent = m;
+          dobMonthEl.appendChild(opt);
+        });
+
+        // Days 1..31
+        for (let d = 1; d <= 31; d++) {
+          const opt = document.createElement('option');
+          opt.value = String(d).padStart(2,'0');
+          opt.textContent = String(d);
+          dobDayEl.appendChild(opt);
+        }
+
+        // Years: 1900..current
+        const thisYear = new Date().getFullYear();
+        for (let y = thisYear; y >= 1900; y--) {
+          const opt = document.createElement('option');
+          opt.value = String(y);
+          opt.textContent = String(y);
+          dobYearEl.appendChild(opt);
+        }
+      })();
 
       // === HELPERS ===
       function setStatus(msg) {
@@ -107,55 +171,57 @@
         statusEl.classList.add('hidden');
         statusEl.textContent = '';
       }
-      function isoToYyyymmdd(iso) {
-        const m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        return m ? `${m[1]}${m[2]}${m[3]}` : '';
-      }
-      function isMinorsYes() {
-        return minorsYesEl.checked;
+      function isMinorsYes() { return minorsYesEl.checked; }
+
+      function dobYyyymmddFromSelects() {
+        const mm = dobMonthEl.value;
+        const dd = dobDayEl.value;
+        const yyyy = dobYearEl.value;
+        if (!mm || !dd || !yyyy) return ""; // required; caller will validate
+        // Validate actual date (e.g., Feb 30 should fail)
+        const iso = `${yyyy}-${mm}-${dd}`;
+        const d = new Date(iso + "T00:00:00Z");
+        const valid =
+          d.getUTCFullYear() === Number(yyyy) &&
+          String(d.getUTCMonth()+1).padStart(2,'0') === mm &&
+          String(d.getUTCDate()).padStart(2,'0') === dd;
+        return valid ? `${yyyy}${mm}${dd}` : "";
       }
 
-      /**
-       * Build Smartwaiver autofill URL.
-       * - If minors = YES → only email + tag
-       * - If minors = NO  → full autofill (names, DOB fallback, phone, tag)
-       */
-      function buildAutofillUrl(d, minorsYes) {
+      function buildAutofillUrl(d, minorsYes, dobYyyymmdd) {
         const p = new URLSearchParams();
 
-        // Always include email if we have it
+        // Always include email + DOB (required)
         if (d.email) p.set('wautofill_email', d.email);
+        if (dobYyyymmdd) p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
 
         // Tag with Lightspeed ID if present
         if (d.lightspeed_id) p.set('wautofill_tag', `ls_${d.lightspeed_id}`);
 
         if (!minorsYes) {
-          // Full autofill path (no minors)
-          const dobYyyymmdd =
-            (d.dob_yyyymmdd && /^\d{8}$/.test(d.dob_yyyymmdd) ? d.dob_yyyymmdd : '') ||
-            isoToYyyymmdd(d.date_of_birth || '') ||
-            '19300101';
-
+          // Full autofill path (No minors): include names/phone if we have them from LS
           if (d.first_name) p.set('wautofill_firstname', d.first_name);
           if (d.last_name)  p.set('wautofill_lastname',  d.last_name);
-          p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
-          if (d.mobile) p.set('wautofill_phone', d.mobile);
+          if (d.mobile)     p.set('wautofill_phone',     d.mobile);
         }
-        // minorsYes → intentionally DO NOT add name/phone/DOB
+        // If minorsYes → only email + tag + DOB
 
         const url = `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
-        console.log('WAIVER url:', url);
+        console.log('INTAKE URL:', url);
         return url;
       }
 
-      // === SUBMIT (email-only lookup) ===
+      // === SUBMIT (email-only lookup + required DOB) ===
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearStatus();
         confirmCard.classList.add('hidden');
 
         const email = document.getElementById('email').value.trim();
-        if (!email) return;
+        const dobYyyymmdd = dobYyyymmddFromSelects();
+
+        if (!email) { setStatus('Please enter your email.'); return; }
+        if (!dobYyyymmdd) { setStatus('Please select a valid Date of Birth.'); return; }
 
         setStatus('Looking up your record…');
 
@@ -163,7 +229,7 @@
           const res = await fetch('/api/lookup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email }) // email-only server is allowed now
+            body: JSON.stringify({ email }) // server allows email-only
           });
 
           const raw = await res.text();
@@ -175,26 +241,27 @@
           const data = JSON.parse(raw);
           lastLookup = data; // { match_quality, lightspeed_id, first_name, last_name, email, ... }
 
-          // If a LS match was found, allow the user to confirm (unless you prefer to auto-continue)
           if (data.match_quality === 'exact' || data.match_quality === 'partial') {
+            // Populate confirmation so the customer can verify it’s them
             document.getElementById('c_name').textContent =
               `${data.first_name || ''} ${data.last_name || ''}`.trim() || '—';
             document.getElementById('c_email').textContent = data.email || '—';
             document.getElementById('c_phone').textContent = data.mobile || '—';
-            document.getElementById('c_dob').textContent = data.date_of_birth || '—';
+            document.getElementById('c_dob').textContent   = data.date_of_birth || '—';
 
             confirmCard.classList.remove('hidden');
             clearStatus();
+
+            // On confirm buttons, we will use the KIOSK DOB the guest selected (not LS)
           } else {
-            // No match → go straight to waiver, using minors logic
-            const url = buildAutofillUrl({ email }, isMinorsYes());
+            // No match → go straight to intake with kiosk DOB
+            const url = buildAutofillUrl({ email }, isMinorsYes(), dobYyyymmdd);
             window.location.href = url;
           }
         } catch (err) {
           console.error('lookup error:', err);
-          setStatus('Lookup error. Starting a fresh waiver…');
-          // Fallback: just use email and minors logic
-          const url = buildAutofillUrl({ email }, isMinorsYes());
+          setStatus('Lookup error. Starting a fresh intake…');
+          const url = buildAutofillUrl({ email }, isMinorsYes(), dobYyyymmdd);
           window.location.href = url;
         }
       });
@@ -202,13 +269,18 @@
       // === CONFIRM BUTTONS ===
       btnYes?.addEventListener('click', () => {
         if (!lastLookup) return;
-        const url = buildAutofillUrl(lastLookup, isMinorsYes());
+        const dobYyyymmdd = dobYyyymmddFromSelects();
+        if (!dobYyyymmdd) { setStatus('Please select a valid Date of Birth.'); return; }
+        // Use kiosk DOB, LS data for names/phone if minors = No
+        const url = buildAutofillUrl(lastLookup, isMinorsYes(), dobYyyymmdd);
         window.location.href = url;
       });
 
       btnNotMe?.addEventListener('click', () => {
         const email = document.getElementById('email').value.trim();
-        const url = buildAutofillUrl({ email }, isMinorsYes());
+        const dobYyyymmdd = dobYyyymmddFromSelects();
+        if (!dobYyyymmdd) { setStatus('Please select a valid Date of Birth.'); return; }
+        const url = buildAutofillUrl({ email }, isMinorsYes(), dobYyyymmdd);
         window.location.href = url;
       });
     </script>

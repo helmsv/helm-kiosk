@@ -1,38 +1,54 @@
-// api/today-intakes.js — tolerant listing: supports tag or email fallback, last 24h window, Intake PDF proxy
+// api/today-intakes.js
+// Lists customers who signed INTAKE within a window but have NOT signed LIABILITY in that same window,
+// matched by Smartwaiver tag "ls_<lightspeed_id>" (falls back to email when no tag exists).
+// Also proxies Intake PDF via ?pdf=<waiverId> to avoid exposing your SW API key in the browser.
+//
+// Uses Smartwaiver Search workflow:
+//   1) GET /v4/search?templateId=...&fromDts=...&toDts=...  -> returns {guid}
+//   2) GET /v4/search/{guid}/results?page=N                 -> returns waivers page
+//
+// Adds a 15s in-memory cache for list mode to reduce API calls / rate-limits.
 
-async function fetchTO(url, opts = {}, ms = 15000) {
+const SEARCH_PAGE_MAX = 100;         // Smartwaiver pages are size 100
+const FETCH_TIMEOUT_MS = 20000;
+const CACHE_TTL_MS = 15_000;         // 15 seconds
+
+// ---- simple in-memory cache (per Vercel function instance) ----
+let _cache = {
+  ts: 0,
+  key: "",
+  payload: null
+};
+
+// --- utils ---
+async function fetchTO(url, opts = {}, ms = FETCH_TIMEOUT_MS) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), ms);
   try { return await fetch(url, { ...opts, signal: ac.signal }); }
   finally { clearTimeout(t); }
 }
 
-function iso24hAgo() {
-  const d = new Date(Date.now() - 24 * 3600 * 1000);
-  return d.toISOString();
+function isoNow() { return new Date().toISOString(); }
+// safer across DST: last 24 hours
+function iso24hAgo() { return new Date(Date.now() - 24 * 3600 * 1000).toISOString(); }
+
+function cacheGet(key) {
+  const now = Date.now();
+  if (_cache.key === key && (now - _cache.ts) < CACHE_TTL_MS && _cache.payload) {
+    return _cache.payload;
+  }
+  return null;
+}
+function cacheSet(key, payload) {
+  _cache = { ts: Date.now(), key, payload };
 }
 
-async function toJson(resp) {
-  const ct = resp.headers.get("content-type") || "";
-  if (/json/i.test(ct)) return await resp.json();
-  const txt = await resp.text();
-  return { _nonjson: txt.slice(0, 300) };
-}
-
-function arrFrom(payload) {
-  if (!payload || typeof payload !== "object") return [];
-  if (Array.isArray(payload.waivers)) return payload.waivers;
-  if (Array.isArray(payload.data)) return payload.data;
-  if (Array.isArray(payload.results)) return payload.results;
-  return Array.isArray(payload) ? payload : [];
-}
-
-function toSimpleRow(w) {
+function normalizeRow(w) {
   const first = w?.firstName || w?.participantFirstName || w?.firstname || "";
   const last  = w?.lastName  || w?.participantLastName  || w?.lastname  || "";
   const email = (w?.email || "").trim().toLowerCase();
   const tag   = (Array.isArray(w?.tags) ? w.tags[0] : w?.tag) || "";
-  const signedOn = w?.createdOn || w?.ts || w?.date || "";
+  const createdOn = w?.createdOn || w?.ts || w?.date || "";
   const lsId = (tag && String(tag).startsWith("ls_")) ? String(tag).slice(3) : "";
   const templateId = w?.templateId || w?.template_id || "";
   const waiverId = w?.waiverId || w?.uuid || w?.id || "";
@@ -42,26 +58,70 @@ function toSimpleRow(w) {
     email,
     first_name: first,
     last_name: last,
-    signed_on: signedOn,
+    signed_on: createdOn,
     waiver_template_id: templateId,
     waiver_id: waiverId
   };
 }
 
-// ====== PDF Proxy Mode ======
+// --- Smartwaiver API helpers (Search workflow) ---
+async function swSearch({ key, templateId, fromDts, toDts, sort = "desc" }) {
+  const url = new URL("https://api.smartwaiver.com/v4/search");
+  if (templateId) url.searchParams.set("templateId", templateId);
+  if (fromDts)    url.searchParams.set("fromDts", fromDts);
+  if (toDts)      url.searchParams.set("toDts", toDts);
+  url.searchParams.set("sort", sort); // desc -> newest first
+  const r = await fetchTO(url.toString(), {
+    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }
+  });
+  if (!r.ok) {
+    const peek = await r.text();
+    throw new Error(`search failed ${r.status}: ${peek}`);
+  }
+  const j = await r.json();
+  const guid = j?.search?.guid || j?.guid;
+  if (!guid) throw new Error("search returned no guid");
+  return { guid, pageCount: j?.search?.pages ?? undefined };
+}
+
+async function swSearchPage({ key, guid, page = 0 }) {
+  const url = new URL(`https://api.smartwaiver.com/v4/search/${encodeURIComponent(guid)}/results`);
+  url.searchParams.set("page", String(page));
+  const r = await fetchTO(url.toString(), {
+    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }
+  }, 30000);
+  if (!r.ok) {
+    const peek = await r.text();
+    throw new Error(`results failed ${r.status}: ${peek}`);
+  }
+  const j = await r.json();
+  const list = Array.isArray(j?.search_results) ? j.search_results : [];
+  return list.map(normalizeRow);
+}
+
+async function swSearchAll({ key, templateId, fromDts, toDts }) {
+  const { guid, pageCount } = await swSearch({ key, templateId, fromDts, toDts, sort: "desc" });
+  const maxPages = Number.isFinite(pageCount) ? pageCount : 10; // sane cap
+  const out = [];
+  for (let p = 0; p < maxPages; p++) {
+    const pageRows = await swSearchPage({ key, guid, page: p });
+    if (pageRows.length === 0) break;
+    out.push(...pageRows);
+    if (pageRows.length < SEARCH_PAGE_MAX) break;
+  }
+  return out;
+}
+
+// --- PDF proxy (keeps API key server-side; no caching here) ---
 async function handlePdfProxy(req, res) {
   const key = process.env.SW_API_KEY;
   const waiverId = String(req.query?.pdf || "").trim();
-  if (!key || !waiverId) {
-    return res.status(400).send("Missing SW_API_KEY or pdf (waiverId) parameter");
-    }
+  if (!key || !waiverId) return res.status(400).send("Missing SW_API_KEY or pdf (waiverId)");
+
   try {
     const u = `https://api.smartwaiver.com/v4/waivers/${encodeURIComponent(waiverId)}/pdf`;
-    const r = await fetchTO(u, { headers: { "sw-api-key": key } }, 30000);
-    if (!r.ok) {
-      const peek = await r.text();
-      return res.status(r.status).send(peek);
-    }
+    const r = await fetchTO(u, { headers: { Authorization: `Bearer ${key}` } }, 30000);
+    if (!r.ok) return res.status(r.status).send(await r.text());
     const buf = Buffer.from(await r.arrayBuffer());
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="intake-${waiverId}.pdf"`);
@@ -73,11 +133,11 @@ async function handlePdfProxy(req, res) {
   }
 }
 
-// ====== List Mode ======
+// --- main handler ---
 module.exports = async (req, res) => {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
-  // PDF proxy branch
+  // PDF passthrough (no cache)
   if (req.query && typeof req.query.pdf !== "undefined") {
     return handlePdfProxy(req, res);
   }
@@ -88,85 +148,70 @@ module.exports = async (req, res) => {
     const LIABILITY_ID = process.env.LIABILITY_WAIVER_ID;
 
     if (!key || !INTAKE_ID || !LIABILITY_ID) {
-      return res.status(200).json({
-        rows: [],
-        error: "Missing SW env (SW_API_KEY/INTAKE_WAIVER_ID/LIABILITY_WAIVER_ID)"
-      });
+      return res.status(200).json({ rows: [], error: "Missing SW env (SW_API_KEY / INTAKE_WAIVER_ID / LIABILITY_WAIVER_ID)" });
     }
 
-    // Window = last 24 hours to avoid TZ edges
-    const fromIso = iso24hAgo();
-    const toIso = new Date().toISOString();
+    // Window = last 24 hours
+    const fromDts = iso24hAgo();
+    const toDts   = isoNow();
 
-    const url = new URL("https://api.smartwaiver.com/v4/waivers");
-    url.searchParams.set("fromDts", fromIso);
-    url.searchParams.set("toDts", toIso);
-    url.searchParams.set("limit", "1000");
+    // ---- cache check (keyed by window + template IDs) ----
+    const cacheKey = `v1|${fromDts}|${toDts}|${INTAKE_ID}|${LIABILITY_ID}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
 
-    const r = await fetchTO(url.toString(), { headers: { "sw-api-key": key } }, 20000);
-    const data = await toJson(r);
-    const all = arrFrom(data).map(toSimpleRow);
+    // Pull INTAKE and LIABILITY within window
+    const [intakes, liabilities] = await Promise.all([
+      swSearchAll({ key, templateId: INTAKE_ID, fromDts, toDts }),
+      swSearchAll({ key, templateId: LIABILITY_ID, fromDts, toDts })
+    ]);
 
-    // Build lookups:
-    //  - by tag (for tag-based correlation)
-    //  - by email (fallback when no tag present)
-    const intakeByTag = new Map();
-    const liabByTag   = new Map();
-    const intakeByEmail = new Map();
-    const liabByEmail   = new Map();
+    // Build lookups
+    const liabByTag = new Map();
+    const liabByEmail = new Map();
+    for (const r of liabilities) {
+      const tag = r.ls_tag || "";
+      const email = r.email || "";
+      if (tag) liabByTag.set(tag, true);
+      else if (email) liabByEmail.set(email, true);
+    }
 
-    for (const row of all) {
-      const isIntake   = row.waiver_template_id === INTAKE_ID;
-      const isLiability= row.waiver_template_id === LIABILITY_ID;
-      const tag = row.ls_tag || "";                  // may be empty if no tag on waiver
-      const email = row.email || "";
+    // Most recent intake per tag/email
+    const candidatesByTag = new Map();
+    const candidatesByEmail = new Map();
 
-      if (isIntake) {
-        if (tag) {
-          if (!intakeByTag.has(tag)) intakeByTag.set(tag, []);
-          intakeByTag.get(tag).push(row);
-        } else if (email) {
-          if (!intakeByEmail.has(email)) intakeByEmail.set(email, []);
-          intakeByEmail.get(email).push(row);
+    for (const r of intakes) {
+      r.intake_pdf_url = `/api/today-intakes?pdf=${encodeURIComponent(r.waiver_id)}`;
+      const keyTag = r.ls_tag || "";
+      if (keyTag) {
+        const cur = candidatesByTag.get(keyTag);
+        if (!cur || String(r.signed_on).localeCompare(cur.signed_on) > 0) {
+          candidatesByTag.set(keyTag, r);
+        }
+      } else if (r.email) {
+        const keyEmail = r.email;
+        const cur = candidatesByEmail.get(keyEmail);
+        if (!cur || String(r.signed_on).localeCompare(cur.signed_on) > 0) {
+          candidatesByEmail.set(keyEmail, r);
         }
       }
-      if (isLiability) {
-        if (tag) {
-          if (!liabByTag.has(tag)) liabByTag.set(tag, []);
-          liabByTag.get(tag).push(row);
-        } else if (email) {
-          if (!liabByEmail.has(email)) liabByEmail.set(email, []);
-          liabByEmail.get(email).push(row);
-        }
-      }
     }
 
-    const needsLiability = [];
-
-    // A) Tag-based: include latest Intake if NO liability with same tag
-    for (const [tag, list] of intakeByTag.entries()) {
-      if ((liabByTag.get(tag) || []).length === 0) {
-        list.sort((a,b) => String(b.signed_on).localeCompare(String(a.signed_on)));
-        const latest = list[0];
-        latest.intake_pdf_url = `/api/today-intakes?pdf=${encodeURIComponent(latest.waiver_id)}`;
-        needsLiability.push(latest);
-      }
+    const out = [];
+    for (const [tag, latest] of candidatesByTag.entries()) {
+      if (!liabByTag.get(tag)) out.push(latest);
+    }
+    for (const [email, latest] of candidatesByEmail.entries()) {
+      if (!liabByEmail.get(email)) out.push(latest);
     }
 
-    // B) Email-based fallback: only for intakes WITHOUT a tag
-    for (const [email, list] of intakeByEmail.entries()) {
-      if ((liabByEmail.get(email) || []).length === 0) {
-        list.sort((a,b) => String(b.signed_on).localeCompare(String(a.signed_on)));
-        const latest = list[0];
-        latest.intake_pdf_url = `/api/today-intakes?pdf=${encodeURIComponent(latest.waiver_id)}`;
-        needsLiability.push(latest);
-      }
-    }
+    out.sort((a, b) => String(b.signed_on).localeCompare(String(a.signed_on)));
 
-    // Newest first
-    needsLiability.sort((a,b) => String(b.signed_on).localeCompare(String(a.signed_on)));
-
-    return res.status(200).json({ rows: needsLiability, from: fromIso, to: toIso });
+    const payload = { rows: out, from: fromDts, to: toDts };
+    cacheSet(cacheKey, payload);
+    return res.status(200).json(payload);
   } catch (e) {
     console.error("today-intakes fatal:", e?.message || e);
     return res.status(200).json({ rows: [] });
