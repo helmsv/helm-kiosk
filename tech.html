@@ -46,16 +46,19 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 30000; // 30s to play nice with Search API rate limits
+    const REFRESH_MS = 30000; // 30s
 
     function fmtTime(s) {
       try { return new Date(s).toLocaleString(); } catch { return s || "—"; }
     }
 
-    function buildLiabilityUrl({ email, lightspeed_id }) {
+    // Now accepts first_name/last_name and adds them to the Liability URL
+    function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }) {
       const p = new URLSearchParams();
       if (email) p.set("wautofill_email", email);
       if (lightspeed_id) p.set("wautofill_tag", `ls_${lightspeed_id}`);
+      if (first_name) p.set("wautofill_firstname", first_name);
+      if (last_name)  p.set("wautofill_lastname",  last_name);
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
@@ -68,6 +71,7 @@
         const pdfCell = r.intake_pdf_url
           ? `<a class="link" href="${r.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>`
           : "—";
+        // Include name values as data attributes on the button
         tr.innerHTML = `
           <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td>
           <td class="py-2 pr-4">${r.email || "—"}</td>
@@ -76,16 +80,30 @@
           <td class="py-2 pr-4">${r.lightspeed_id || "—"}</td>
           <td class="py-2 pr-4">${pdfCell}</td>
           <td class="py-2 pr-4">
-            <button class="btn" data-email="${r.email || ""}" data-lsid="${r.lightspeed_id || ""}">Open Liability</button>
+            <button
+              class="btn"
+              data-email="${r.email || ""}"
+              data-lsid="${r.lightspeed_id || ""}"
+              data-first="${r.first_name || ""}"
+              data-last="${r.last_name || ""}"
+            >Open Liability</button>
           </td>
         `;
         tb.appendChild(tr);
       }
+      // wire buttons
       tb.querySelectorAll("button[data-email]").forEach(btn => {
         btn.addEventListener("click", () => {
           const email = btn.getAttribute("data-email");
           const lsid  = btn.getAttribute("data-lsid");
-          const url = buildLiabilityUrl({ email, lightspeed_id: lsid });
+          const first = btn.getAttribute("data-first");
+          const last  = btn.getAttribute("data-last");
+          const url = buildLiabilityUrl({
+            email,
+            lightspeed_id: lsid,
+            first_name: first,
+            last_name:  last
+          });
           console.log("LIABILITY URL:", url);
           window.open(url, "_blank", "noopener");
         });

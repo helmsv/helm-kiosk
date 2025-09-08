@@ -206,7 +206,14 @@
         }
         // If minorsYes → only email + tag + DOB
 
-        const url = `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
+        // put this near the other CONFIG constants at the top of the script:
+	const REDIRECT_URL = `${window.location.origin}/index.html`; // back to the landing page
+
+	// inside buildAutofillUrl(), before constructing the URL:
+	p.set('redirect', REDIRECT_URL);
+
+	// final URL:
+	const url = `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
         console.log('INTAKE URL:', url);
         return url;
       }
