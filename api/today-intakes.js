@@ -1,6 +1,4 @@
-// api/today-intakes.js
-// Lists customers who signed INTAKE today but have NOT signed LIABILITY today (matched by Smartwaiver tag "ls_<lightspeed_id>").
-// Also proxies Intake PDF downloads via ?pdf=<waiverId> to avoid exposing your SW_API_KEY in the browser.
+// api/today-intakes.js — tolerant listing: supports tag or email fallback, last 24h window, Intake PDF proxy
 
 async function fetchTO(url, opts = {}, ms = 15000) {
   const ac = new AbortController();
@@ -9,15 +7,9 @@ async function fetchTO(url, opts = {}, ms = 15000) {
   finally { clearTimeout(t); }
 }
 
-function startOfTodayISO(tzOffsetMinutes = -480) {
-  // tzOffsetMinutes defaults to Pacific (-480 ~ UTC-8; close enough for daily windowing)
-  const now = new Date();
-  const utcNow = now.getTime() + now.getTimezoneOffset() * 60000;
-  const local = new Date(utcNow + tzOffsetMinutes * 60000);
-  local.setHours(0, 0, 0, 0);
-  // convert back to UTC ISO (Smartwaiver accepts full ISO)
-  const backUTC = new Date(local.getTime() - now.getTimezoneOffset() * 60000);
-  return backUTC.toISOString();
+function iso24hAgo() {
+  const d = new Date(Date.now() - 24 * 3600 * 1000);
+  return d.toISOString();
 }
 
 async function toJson(resp) {
@@ -27,7 +19,6 @@ async function toJson(resp) {
   return { _nonjson: txt.slice(0, 300) };
 }
 
-// Normalize list shapes from Smartwaiver
 function arrFrom(payload) {
   if (!payload || typeof payload !== "object") return [];
   if (Array.isArray(payload.waivers)) return payload.waivers;
@@ -36,14 +27,15 @@ function arrFrom(payload) {
   return Array.isArray(payload) ? payload : [];
 }
 
-// Convert one waiver to a simple row used by the tech UI
 function toSimpleRow(w) {
   const first = w?.firstName || w?.participantFirstName || w?.firstname || "";
   const last  = w?.lastName  || w?.participantLastName  || w?.lastname  || "";
-  const email = w?.email || "";
+  const email = (w?.email || "").trim().toLowerCase();
   const tag   = (Array.isArray(w?.tags) ? w.tags[0] : w?.tag) || "";
   const signedOn = w?.createdOn || w?.ts || w?.date || "";
   const lsId = (tag && String(tag).startsWith("ls_")) ? String(tag).slice(3) : "";
+  const templateId = w?.templateId || w?.template_id || "";
+  const waiverId = w?.waiverId || w?.uuid || w?.id || "";
   return {
     ls_tag: tag || (lsId ? `ls_${lsId}` : ""),
     lightspeed_id: lsId,
@@ -51,8 +43,8 @@ function toSimpleRow(w) {
     first_name: first,
     last_name: last,
     signed_on: signedOn,
-    waiver_template_id: w?.templateId || w?.template_id || "",
-    waiver_id: w?.waiverId || w?.uuid || w?.id || ""
+    waiver_template_id: templateId,
+    waiver_id: waiverId
   };
 }
 
@@ -62,18 +54,14 @@ async function handlePdfProxy(req, res) {
   const waiverId = String(req.query?.pdf || "").trim();
   if (!key || !waiverId) {
     return res.status(400).send("Missing SW_API_KEY or pdf (waiverId) parameter");
-  }
-
+    }
   try {
     const u = `https://api.smartwaiver.com/v4/waivers/${encodeURIComponent(waiverId)}/pdf`;
     const r = await fetchTO(u, { headers: { "sw-api-key": key } }, 30000);
-
     if (!r.ok) {
       const peek = await r.text();
       return res.status(r.status).send(peek);
     }
-
-    // Stream PDF through
     const buf = Buffer.from(await r.arrayBuffer());
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="intake-${waiverId}.pdf"`);
@@ -106,11 +94,10 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Time window: today in Pacific (loose & reliable for daily ops)
-    const fromIso = startOfTodayISO(-480);
+    // Window = last 24 hours to avoid TZ edges
+    const fromIso = iso24hAgo();
     const toIso = new Date().toISOString();
 
-    // Fetch today's waivers (limit generously; raise if your volume exceeds)
     const url = new URL("https://api.smartwaiver.com/v4/waivers");
     url.searchParams.set("fromDts", fromIso);
     url.searchParams.set("toDts", toIso);
@@ -118,34 +105,66 @@ module.exports = async (req, res) => {
 
     const r = await fetchTO(url.toString(), { headers: { "sw-api-key": key } }, 20000);
     const data = await toJson(r);
-    const all = arrFrom(data);
+    const all = arrFrom(data).map(toSimpleRow);
 
-    // Group by Smartwaiver tag (ls_<id>)
-    const byTag = new Map(); // tag -> { intakes:[], liabilities:[] }
-    for (const w of all) {
-      const row = toSimpleRow(w);
-      const tag = row.ls_tag || "";
-      const tmpl = String(row.waiver_template_id || "");
-      if (!tag) continue; // only track waivers linked to a Lightspeed customer (tag present)
-      if (!byTag.has(tag)) byTag.set(tag, { intakes: [], liabilities: [] });
-      if (tmpl === INTAKE_ID) byTag.get(tag).intakes.push(row);
-      else if (tmpl === LIABILITY_ID) byTag.get(tag).liabilities.push(row);
+    // Build lookups:
+    //  - by tag (for tag-based correlation)
+    //  - by email (fallback when no tag present)
+    const intakeByTag = new Map();
+    const liabByTag   = new Map();
+    const intakeByEmail = new Map();
+    const liabByEmail   = new Map();
+
+    for (const row of all) {
+      const isIntake   = row.waiver_template_id === INTAKE_ID;
+      const isLiability= row.waiver_template_id === LIABILITY_ID;
+      const tag = row.ls_tag || "";                  // may be empty if no tag on waiver
+      const email = row.email || "";
+
+      if (isIntake) {
+        if (tag) {
+          if (!intakeByTag.has(tag)) intakeByTag.set(tag, []);
+          intakeByTag.get(tag).push(row);
+        } else if (email) {
+          if (!intakeByEmail.has(email)) intakeByEmail.set(email, []);
+          intakeByEmail.get(email).push(row);
+        }
+      }
+      if (isLiability) {
+        if (tag) {
+          if (!liabByTag.has(tag)) liabByTag.set(tag, []);
+          liabByTag.get(tag).push(row);
+        } else if (email) {
+          if (!liabByEmail.has(email)) liabByEmail.set(email, []);
+          liabByEmail.get(email).push(row);
+        }
+      }
     }
 
-    // For each tag, include the most recent Intake only if there is no Liability today
     const needsLiability = [];
-    for (const [tag, grp] of byTag.entries()) {
-      if (grp.intakes.length > 0 && grp.liabilities.length === 0) {
-        grp.intakes.sort((a, b) => String(b.signed_on).localeCompare(String(a.signed_on)));
-        const latest = grp.intakes[0];
-        // Attach a PDF link (proxied through this API)
+
+    // A) Tag-based: include latest Intake if NO liability with same tag
+    for (const [tag, list] of intakeByTag.entries()) {
+      if ((liabByTag.get(tag) || []).length === 0) {
+        list.sort((a,b) => String(b.signed_on).localeCompare(String(a.signed_on)));
+        const latest = list[0];
         latest.intake_pdf_url = `/api/today-intakes?pdf=${encodeURIComponent(latest.waiver_id)}`;
         needsLiability.push(latest);
       }
     }
 
-    // Sort newest first for the UI
-    needsLiability.sort((a, b) => String(b.signed_on).localeCompare(String(a.signed_on)));
+    // B) Email-based fallback: only for intakes WITHOUT a tag
+    for (const [email, list] of intakeByEmail.entries()) {
+      if ((liabByEmail.get(email) || []).length === 0) {
+        list.sort((a,b) => String(b.signed_on).localeCompare(String(a.signed_on)));
+        const latest = list[0];
+        latest.intake_pdf_url = `/api/today-intakes?pdf=${encodeURIComponent(latest.waiver_id)}`;
+        needsLiability.push(latest);
+      }
+    }
+
+    // Newest first
+    needsLiability.sort((a,b) => String(b.signed_on).localeCompare(String(a.signed_on)));
 
     return res.status(200).json({ rows: needsLiability, from: fromIso, to: toIso });
   } catch (e) {
