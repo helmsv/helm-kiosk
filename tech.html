@@ -41,7 +41,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-overlay-v2</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-overlay-v3</div>
     </div>
   </main>
 
@@ -149,7 +149,7 @@
           if (intakeWaiverId) {
             try {
               const details = await fetchIntakeDetails(intakeWaiverId);
-              details.waiver_id = intakeWaiverId; // for debug link
+              details.waiver_id = intakeWaiverId; // for Debug link
               showOverlay(details);
             } catch (e) {
               console.error("intake-details failed:", e);
