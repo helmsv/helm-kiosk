@@ -41,13 +41,12 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-overlay-v2</div>
     </div>
   </main>
 
-  <!-- Simple toast -->
+  <!-- Toast -->
   <div id="toast" class="fixed bottom-4 right-4 hidden rounded-xl bg-black text-white px-4 py-2 text-sm shadow-lg"></div>
-
-  <!-- Overlay container (injected dynamically) -->
 
   <script>
     let LIABILITY_WAIVER_ID = "";
@@ -64,7 +63,6 @@
       try { return new Date(s).toLocaleString(); } catch { return s || "—"; }
     }
 
-    // Build Liability URL with email/tag + first/last (from Intake row)
     function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }) {
       const p = new URLSearchParams();
       if (email) p.set("wautofill_email", email);
@@ -74,16 +72,19 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // Fetch Age/Weight/Height from the Intake waiver (server proxies SW v4)
     async function fetchIntakeDetails(waiverId) {
       const r = await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
       if (!r.ok) throw new Error(`intake-details ${r.status}`);
-      return await r.json(); // { age, weight_lb, height_in, ... }
+      return await r.json();
     }
 
     function showOverlay(details) {
-      // Remove any existing overlay
       document.getElementById("overlay-intake")?.remove();
+      const missing = (!details.age || !details.weight_lb || !details.height_in);
+      const dbg = details.waiver_id
+        ? `<a class="text-xs text-blue-600 hover:underline" target="_blank" rel="noopener"
+             href="/api/intake-details?waiverId=${encodeURIComponent(details.waiver_id)}&debug=1">Debug raw</a>`
+        : "";
 
       const div = document.createElement("div");
       div.id = "overlay-intake";
@@ -98,7 +99,8 @@
             <div><strong>Weight (lb):</strong> ${details.weight_lb || "—"}</div>
             <div><strong>Height (in):</strong> ${details.height_in || "—"}</div>
           </div>
-          <div class="mt-5 text-right">
+          <div class="mt-4 flex items-center justify-between">
+            <div class="text-gray-500">${missing ? dbg : ""}</div>
             <button id="overlayClose" class="rounded-xl bg-black text-white px-3 py-2 text-sm font-semibold hover:opacity-90">Close</button>
           </div>
         </div>`;
@@ -136,7 +138,6 @@
         tb.appendChild(tr);
       }
 
-      // wire buttons
       tb.querySelectorAll("button[data-email]").forEach(btn => {
         btn.addEventListener("click", async () => {
           const email = btn.getAttribute("data-email");
@@ -145,15 +146,17 @@
           const last  = btn.getAttribute("data-last");
           const intakeWaiverId = btn.getAttribute("data-intake");
 
-          // Try to fetch Intake details; if it fails, just proceed to Liability
           if (intakeWaiverId) {
             try {
               const details = await fetchIntakeDetails(intakeWaiverId);
-              showOverlay(details); // display Age/Weight/Height for tech reference
+              details.waiver_id = intakeWaiverId; // for debug link
+              showOverlay(details);
             } catch (e) {
               console.error("intake-details failed:", e);
-              showToast("Could not load intake measurements. Opening Liability.");
+              showToast("Could not load intake measurements.");
             }
+          } else {
+            showToast("No intake ID on row.");
           }
 
           const url = buildLiabilityUrl({
@@ -162,7 +165,6 @@
             first_name: first,
             last_name:  last
           });
-          console.log("LIABILITY URL:", url);
           window.open(url, "_blank", "noopener");
         });
       });
@@ -188,7 +190,6 @@
         const r = await fetch("/api/config");
         const cfg = await r.json();
         LIABILITY_WAIVER_ID = cfg.liability_waiver_id || "";
-        console.log("Loaded LIABILITY_WAIVER_ID:", LIABILITY_WAIVER_ID);
       } catch (e) {
         console.error("config fetch failed:", e);
         showToast("Failed to load config");
