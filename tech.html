@@ -44,15 +44,27 @@
     </div>
   </main>
 
+  <!-- Simple toast -->
+  <div id="toast" class="fixed bottom-4 right-4 hidden rounded-xl bg-black text-white px-4 py-2 text-sm shadow-lg"></div>
+
+  <!-- Overlay container (injected dynamically) -->
+
   <script>
     let LIABILITY_WAIVER_ID = "";
     const REFRESH_MS = 30000; // 30s
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 3000);
+    }
 
     function fmtTime(s) {
       try { return new Date(s).toLocaleString(); } catch { return s || "—"; }
     }
 
-    // Now accepts first_name/last_name and adds them to the Liability URL
+    // Build Liability URL with email/tag + first/last (from Intake row)
     function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }) {
       const p = new URLSearchParams();
       if (email) p.set("wautofill_email", email);
@@ -60,6 +72,38 @@
       if (first_name) p.set("wautofill_firstname", first_name);
       if (last_name)  p.set("wautofill_lastname",  last_name);
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
+    }
+
+    // Fetch Age/Weight/Height from the Intake waiver (server proxies SW v4)
+    async function fetchIntakeDetails(waiverId) {
+      const r = await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
+      if (!r.ok) throw new Error(`intake-details ${r.status}`);
+      return await r.json(); // { age, weight_lb, height_in, ... }
+    }
+
+    function showOverlay(details) {
+      // Remove any existing overlay
+      document.getElementById("overlay-intake")?.remove();
+
+      const div = document.createElement("div");
+      div.id = "overlay-intake";
+      div.className = "fixed inset-0 bg-black/50 flex items-center justify-center z-50";
+      div.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-[420px]">
+          <h3 class="text-lg font-semibold mb-3">Intake Measurements</h3>
+          <div class="space-y-1 text-sm">
+            <div><strong>Name:</strong> ${[details.first_name, details.last_name].filter(Boolean).join(" ") || "—"}</div>
+            <div><strong>Email:</strong> ${details.email || "—"}</div>
+            <div><strong>Age:</strong> ${details.age || "—"}</div>
+            <div><strong>Weight (lb):</strong> ${details.weight_lb || "—"}</div>
+            <div><strong>Height (in):</strong> ${details.height_in || "—"}</div>
+          </div>
+          <div class="mt-5 text-right">
+            <button id="overlayClose" class="rounded-xl bg-black text-white px-3 py-2 text-sm font-semibold hover:opacity-90">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(div);
+      document.getElementById("overlayClose").onclick = () => div.remove();
     }
 
     function renderRows(rows) {
@@ -71,7 +115,6 @@
         const pdfCell = r.intake_pdf_url
           ? `<a class="link" href="${r.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>`
           : "—";
-        // Include name values as data attributes on the button
         tr.innerHTML = `
           <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td>
           <td class="py-2 pr-4">${r.email || "—"}</td>
@@ -86,18 +129,33 @@
               data-lsid="${r.lightspeed_id || ""}"
               data-first="${r.first_name || ""}"
               data-last="${r.last_name || ""}"
+              data-intake="${r.waiver_id || ""}"
             >Open Liability</button>
           </td>
         `;
         tb.appendChild(tr);
       }
+
       // wire buttons
       tb.querySelectorAll("button[data-email]").forEach(btn => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const email = btn.getAttribute("data-email");
           const lsid  = btn.getAttribute("data-lsid");
           const first = btn.getAttribute("data-first");
           const last  = btn.getAttribute("data-last");
+          const intakeWaiverId = btn.getAttribute("data-intake");
+
+          // Try to fetch Intake details; if it fails, just proceed to Liability
+          if (intakeWaiverId) {
+            try {
+              const details = await fetchIntakeDetails(intakeWaiverId);
+              showOverlay(details); // display Age/Weight/Height for tech reference
+            } catch (e) {
+              console.error("intake-details failed:", e);
+              showToast("Could not load intake measurements. Opening Liability.");
+            }
+          }
+
           const url = buildLiabilityUrl({
             email,
             lightspeed_id: lsid,
@@ -119,6 +177,7 @@
           `Window: ${data.from || "?"} → ${data.to || "?"}. Auto-refresh every ${Math.floor(REFRESH_MS/1000)}s.`;
       } catch (e) {
         console.error(e);
+        showToast("Failed to refresh list");
       }
     }
 
@@ -132,6 +191,7 @@
         console.log("Loaded LIABILITY_WAIVER_ID:", LIABILITY_WAIVER_ID);
       } catch (e) {
         console.error("config fetch failed:", e);
+        showToast("Failed to load config");
       }
       await refresh();
       setInterval(refresh, REFRESH_MS);
