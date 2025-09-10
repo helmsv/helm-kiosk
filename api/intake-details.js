@@ -2,11 +2,16 @@
 // GET /api/intake-details?waiverId=XXXXX[&debug=1]
 // Returns { first_name, last_name, email, age, weight_lb, height_in, raw } for an Intake waiver.
 //
-// ENV (optional to lock exact matches):
+// This version reads Smartwaiver's customParticipantFields directly (object keyed by field IDs)
+// and also keeps the recursive fallback scanner. It computes age from DOB when present,
+// and height_in from feet+inches fields.
+//
+// ENV (optional to lock exact matches if your field IDs ever change):
 //   SW_API_KEY  (required)
-//   SW_AGE_QID / SW_AGE_LABEL
-//   SW_WEIGHT_QID / SW_WEIGHT_LABEL
-//   SW_HEIGHT_QID / SW_HEIGHT_LABEL
+//   SW_WEIGHT_FIELD_KEY="ktxbHqRFfWLTe"
+//   SW_HEIGHT_FEET_FIELD_KEY="HWiSfrUi2BNDf"
+//   SW_HEIGHT_INCH_FIELD_KEY="dnmPAXmd8wprP"
+//   // If you rename or swap templates, you can still fall back to displayText matching below.
 
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -18,19 +23,13 @@ async function fetchTO(url, opts = {}, ms = FETCH_TIMEOUT_MS) {
 }
 
 // ---------- unit helpers ----------
-function toNumberSafe(s) {
-  if (s === null || s === undefined) return "";
-  const t = String(s).trim();
-  if (!t) return "";
-  const n = Number(t.replace(/[^\d.]/g, ""));
-  return Number.isFinite(n) ? n : "";
+function toIntSafe(s) {
+  const n = Number(String(s ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
-
 function parseWeightToLb(input) {
-  if (input === null || input === undefined || input === "") return "";
-  const s = String(input).trim().toLowerCase();
+  const s = String(input ?? "").trim().toLowerCase();
   if (!s) return "";
-
   if (s.includes("kg")) {
     const n = Number(s.replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? Math.round(n * 2.20462) : "";
@@ -38,116 +37,52 @@ function parseWeightToLb(input) {
   const n = Number(s.replace(/[^0-9.]/g, ""));
   return Number.isFinite(n) ? Math.round(n) : "";
 }
-
-function parseHeightToInches(input) {
-  if (input === null || input === undefined || input === "") return "";
-  const s0 = String(input).trim().toLowerCase();
-  if (!s0) return "";
-
-  // 5'10" / 5' 10"
-  let m = s0.match(/^(\d{1,2})\s*'\s*(\d{1,2})\s*(?:\"|in|inches)?$/);
-  if (m) return Number(m[1]) * 12 + Number(m[2]);
-
-  // 5 ft 10 in / 5 feet 10 inches
-  m = s0.match(/^(\d{1,2})\s*(?:ft|feet)\s*(\d{1,2})\s*(?:in|inch|inches)?$/);
-  if (m) return Number(m[1]) * 12 + Number(m[2]);
-
-  // 5-10 or 5 10
-  m = s0.match(/^(\d{1,2})[-\s](\d{1,2})$/);
-  if (m) return Number(m[1]) * 12 + Number(m[2]);
-
-  // 70 in / 70 inches
-  m = s0.match(/^(\d{2,3})\s*(?:in|inch|inches)$/);
-  if (m) return Number(m[1]);
-
-  // 178 cm
-  m = s0.match(/^(\d{2,3})\s*cm$/);
-  if (m) return Math.round(Number(m[1]) / 2.54);
-
-  // bare number: infer inches (45..90) or cm (120..230)
-  const n = Number(s0.replace(/[^0-9.]/g, ""));
-  if (Number.isFinite(n)) {
-    if (n >= 45 && n <= 90) return Math.round(n);
-    if (n >= 120 && n <= 230) return Math.round(n / 2.54);
-  }
-  return "";
+function parseHeightToInchesFromFeetIn(feet, inches) {
+  const f = toIntSafe(feet);
+  const i = toIntSafe(inches);
+  const total = f * 12 + i;
+  return total > 0 ? total : "";
+}
+function ageFromDobISO(dobIso) {
+  if (!dobIso) return "";
+  const m = String(dobIso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "";
+  const [ , yyyy, mm, dd ] = m;
+  const dob = new Date(Date.UTC(+yyyy, +mm - 1, +dd));
+  if (isNaN(dob.getTime())) return "";
+  const now = new Date();
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const mDiff = (now.getUTCMonth() + 1) - (+mm);
+  const dDiff = now.getUTCDate() - (+dd);
+  if (mDiff < 0 || (mDiff === 0 && dDiff < 0)) age--;
+  return age >= 0 && age <= 120 ? String(age) : "";
 }
 
-// ---------- recursive scan ----------
-// Walk the entire waiver JSON and collect candidate Q&A entries.
-// We consider any object that looks like {question/label/name, answer/value/response}
-// AND also any primitive under keys that hint at age/weight/height.
+// ---------- recursive scan (fallback / debug) ----------
 function collectCandidates(root) {
   const out = [];
-
   function visit(node, pathArr) {
     if (node === null || node === undefined) return;
     const t = typeof node;
-
     if (t === "string" || t === "number" || t === "boolean") {
-      const key = pathArr[pathArr.length - 1] || "";
-      out.push({
-        path: pathArr.join("."),
-        label: key,
-        value: String(node)
-      });
+      out.push({ path: pathArr.join("."), label: pathArr[pathArr.length - 1] || "", value: String(node) });
       return;
     }
-
     if (Array.isArray(node)) {
       node.forEach((v, i) => visit(v, pathArr.concat(String(i))));
       return;
     }
-
     if (t === "object") {
-      // shape like { question|label|name, answer|value|response }
       const label = String(node.question ?? node.label ?? node.name ?? node.title ?? node.key ?? "").trim();
       const value = node.answer ?? node.value ?? node.response ?? node.val;
-      if (label && (value !== undefined && value !== null && String(value).trim() !== "")) {
-        out.push({
-          path: pathArr.join("."),
-          label,
-          value: String(value)
-        });
+      if (label && value !== undefined && value !== null && String(value).trim() !== "") {
+        out.push({ path: pathArr.join("."), label, value: String(value) });
       }
-      // traverse children
-      for (const [k, v] of Object.entries(node)) {
-        visit(v, pathArr.concat(k));
-      }
+      for (const [k, v] of Object.entries(node)) visit(v, pathArr.concat(k));
     }
   }
-
   visit(root, []);
   return out;
-}
-
-function bestByRegex(cands, regexes) {
-  // Prefer items whose LABEL matches; if none, allow PATH match
-  for (const rx of regexes) {
-    const hit = cands.find(c => rx.test((c.label || "")));
-    if (hit) return hit.value;
-  }
-  for (const rx of regexes) {
-    const hit = cands.find(c => rx.test((c.path || "")));
-    if (hit) return hit.value;
-  }
-  return "";
-}
-
-function pickWithOverrides(cands, { qid, label, regexes }) {
-  // exact label (case-insensitive)
-  if (label) {
-    const norm = String(label).trim().toLowerCase();
-    const hit = cands.find(c => String(c.label || "").trim().toLowerCase() === norm);
-    if (hit && hit.value) return hit.value;
-  }
-  // exact ID (some shapes include questionId in the path)
-  if (qid) {
-    const hit = cands.find(c => c.path && c.path.toLowerCase().includes(String(qid).toLowerCase()));
-    if (hit && hit.value) return hit.value;
-  }
-  // regex fallback
-  return bestByRegex(cands, regexes);
 }
 
 module.exports = async (req, res) => {
@@ -166,70 +101,102 @@ module.exports = async (req, res) => {
     const j = await r.json();
     const w = j?.waiver || j;
 
-    // Identity (participants array varies—try a few common fields)
+    // Identity
     const p0 = Array.isArray(w?.participants) && w.participants.length ? w.participants[0] : {};
-    const first_name =
-      p0?.firstName || p0?.firstname || w?.firstName || w?.firstname || "";
-    const last_name  =
-      p0?.lastName  || p0?.lastname  || w?.lastName  || w?.lastname  || "";
-    const email      =
-      p0?.email || w?.email || "";
+    const first_name = p0?.firstName || p0?.firstname || w?.firstName || w?.firstname || "";
+    const last_name  = p0?.lastName  || p0?.lastname  || w?.lastName  || w?.lastname  || "";
+    const email      = p0?.email || w?.email || "";
 
-    // Collect ALL candidates from the payload
-    const candidates = collectCandidates(w);
+    // DOB -> Age
+    const dob = p0?.dob || w?.dob || "";
+    const age = ageFromDobISO(dob);
 
-    if (debug) {
-      // Send a compact map to help you see where fields live.
-      // Limit to 120 entries and trim long values.
-      const preview = candidates.slice(0, 120).map(c => ({
-        path: c.path,
-        label: c.label,
-        value: c.value.length > 80 ? (c.value.slice(0, 80) + "…") : c.value
-      }));
-      return res.status(200).json({ first_name, last_name, email, candidates: preview });
+    // ---- Preferred: read customParticipantFields (object keyed by field IDs) ----
+    const cpf = p0?.customParticipantFields && typeof p0.customParticipantFields === "object"
+      ? p0.customParticipantFields : null;
+
+    let weight_lb = "";
+    let height_in = "";
+
+    if (cpf) {
+      // If you set ENV keys, use them first
+      const weightKey = process.env.SW_WEIGHT_FIELD_KEY || "";
+      const hFeetKey  = process.env.SW_HEIGHT_FEET_FIELD_KEY || "";
+      const hInKey    = process.env.SW_HEIGHT_INCH_FIELD_KEY || "";
+
+      function valByKey(k) {
+        if (!k) return "";
+        const node = cpf[k];
+        return node && (node.value ?? node.answer ?? "") !== undefined ? String(node.value ?? node.answer ?? "") : "";
+      }
+
+      let wRaw = valByKey(weightKey);
+      let hfRaw = valByKey(hFeetKey);
+      let hiRaw = valByKey(hInKey);
+
+      // If no ENV or missing, fall back to displayText matching
+      if (!wRaw) {
+        for (const [k, v] of Object.entries(cpf)) {
+          const label = String(v?.displayText || "").toLowerCase();
+          if (label.includes("weight")) { wRaw = String(v?.value ?? ""); break; }
+        }
+      }
+      if (!hfRaw) {
+        for (const [k, v] of Object.entries(cpf)) {
+          const label = String(v?.displayText || "").toLowerCase();
+          if (label.includes("height") && label.includes("feet")) { hfRaw = String(v?.value ?? ""); break; }
+        }
+      }
+      if (!hiRaw) {
+        for (const [k, v] of Object.entries(cpf)) {
+          const label = String(v?.displayText || "").toLowerCase();
+          if (label.includes("height") && label.includes("inch")) { hiRaw = String(v?.value ?? ""); break; }
+        }
+      }
+
+      weight_lb = parseWeightToLb(wRaw) || "";
+      const hInches = parseHeightToInchesFromFeetIn(hfRaw, hiRaw);
+      if (hInches) height_in = hInches;
     }
 
-    // ENV-based pins + regex matchers
-    const cfg = {
-      age: {
-        qid: process.env.SW_AGE_QID || "",
-        label: process.env.SW_AGE_LABEL || "",
-        regexes: [
-          /^age\b/i,
-          /participant.*age/i
-        ]
-      },
-      weight: {
-        qid: process.env.SW_WEIGHT_QID || "",
-        label: process.env.SW_WEIGHT_LABEL || "",
-        regexes: [
-          /weight/i,
-          /\b(lb|lbs|pounds)\b/i,
-          /\bkg\b/i
-        ]
-      },
-      height: {
-        qid: process.env.SW_HEIGHT_QID || "",
-        label: process.env.SW_HEIGHT_LABEL || "",
-        regexes: [
-          /height/i,
-          /\bin(ch|ches)?\b/i,
-          /\bcm\b/i,
-          /\bft\b|\bfeet\b/i
-        ]
+    // ---- Fallback: recursive candidates if still empty ----
+    if (!weight_lb || !height_in) {
+      const candidates = collectCandidates(w);
+      if (debug) {
+        // In debug mode return the map instead of final values (helps you inspect)
+        const preview = candidates.slice(0, 150).map(c => ({
+          path: c.path,
+          label: c.label,
+          value: c.value.length > 80 ? (c.value.slice(0, 80) + "…") : c.value
+        }));
+        return res.status(200).json({ first_name, last_name, email, candidates: preview });
       }
-    };
 
-    const ageRaw    = pickWithOverrides(candidates, cfg.age);
-    const weightRaw = pickWithOverrides(candidates, cfg.weight);
-    const heightRaw = pickWithOverrides(candidates, cfg.height);
+      if (!weight_lb) {
+        const wHit = candidates.find(c =>
+          /weight/i.test(c.label) || /weight/i.test(c.path)
+        );
+        if (wHit) weight_lb = parseWeightToLb(wHit.value) || "";
+      }
+
+      if (!height_in) {
+        const hf = candidates.find(c =>
+          /height/i.test(c.label) && /feet|ft/i.test(c.label)
+        );
+        const hi = candidates.find(c =>
+          /height/i.test(c.label) && /inch/i.test(c.label)
+        );
+        const hInches = parseHeightToInchesFromFeetIn(hf?.value ?? "", hi?.value ?? "");
+        if (hInches) height_in = hInches;
+      }
+    }
 
     const out = {
       first_name, last_name, email,
-      age: toNumberSafe(ageRaw) || "",
-      weight_lb: parseWeightToLb(weightRaw) || "",
-      height_in: parseHeightToInches(heightRaw) || "",
-      raw: { ageRaw, weightRaw, heightRaw }
+      age: age || "",
+      weight_lb: weight_lb || "",
+      height_in: height_in || "",
+      raw: { dob, used_customParticipantFields: !!cpf }
     };
 
     return res.status(200).json(out);
