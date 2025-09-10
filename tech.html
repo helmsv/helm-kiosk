@@ -14,6 +14,10 @@
     .kbd { @apply inline-block rounded-md border border-gray-300 px-1.5 py-0.5 text-xs bg-gray-50; }
     .input { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; }
     .select { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; }
+    .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; }
+    .nudge { @apply inline-flex items-center gap-1; }
+    .nbtn { @apply rounded-md border border-gray-300 px-2 py-[2px] text-xs bg-white hover:bg-gray-50; }
+    .nval { @apply inline-block min-w-[2.5rem] text-center text-xs text-gray-700; }
   </style>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
@@ -45,7 +49,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v2</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v5</div>
     </div>
   </main>
 
@@ -54,7 +58,7 @@
 
   <!-- DIN modal -->
   <div id="dinModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
-    <div class="bg-white rounded-2xl shadow-2xl p-6 w-[800px] max-w-[95vw]">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 w-[880px] max-w-[95vw]">
       <div class="flex items-start justify-between mb-3">
         <h3 class="text-lg font-semibold">DIN Calculator (pre-Liability)</h3>
         <button id="dinClose" class="btn-outline">Close</button>
@@ -72,16 +76,18 @@
             <dt class="text-gray-500">Height</dt><dd id="i_height" class="font-medium">—</dd>
             <dt class="text-gray-500">Skier Type</dt><dd id="i_skier" class="font-medium">—</dd>
           </dl>
-          <p class="text-xs text-gray-500 mt-3">Height is shown in centimeters for clarity. Intake source: Smartwaiver.</p>
+          <p class="text-xs text-gray-500 mt-3">Height shown in centimeters. Intake source: Smartwaiver.</p>
         </div>
 
         <!-- Right: Inputs & Result -->
         <div class="border rounded-xl p-4">
           <h4 class="font-semibold mb-2">Tech Inputs</h4>
+
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-gray-600 mb-1">Boot Sole Length (mm)</label>
               <input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 305">
+              <p id="bsl_hint" class="text-[11px] text-gray-500 mt-1"></p>
             </div>
             <div>
               <label class="block text-xs text-gray-600 mb-1">Skier Type</label>
@@ -99,7 +105,6 @@
                 <option value="none">No adjustment</option>
                 <option value="minus1">Reduce one level</option>
               </select>
-              <p class="text-[11px] text-gray-500 mt-1">Under ~10 or over ~49 typically reduce one level (ISO guidance).</p>
             </div>
             <div>
               <label class="block text-xs text-gray-600 mb-1">Basis (Weight vs Height)</label>
@@ -111,23 +116,86 @@
             </div>
           </div>
 
+          <!-- Base DIN -->
           <div class="mt-4 border rounded-lg p-3 bg-gray-50">
-            <div class="text-sm text-gray-600">Result</div>
+            <div class="text-sm text-gray-600">Base Result</div>
             <div class="mt-1 flex items-baseline gap-3">
               <div class="text-2xl font-bold" id="out_din">—</div>
-              <div class="text-sm text-gray-500">Release value</div>
+              <div class="text-sm text-gray-500">Release value (rounded to 0.5)</div>
             </div>
             <div class="mt-1 text-xs text-gray-600" id="out_summary"></div>
+
+            <!-- Per-foot outputs with independent nudges -->
+            <div class="mt-4 grid grid-cols-2 gap-3">
+              <div class="border rounded-lg p-3 bg-white">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-sm font-semibold">Left Ski</div>
+                  <div class="text-[11px] text-gray-500">nudge step ±0.5</div>
+                </div>
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs text-gray-600">Toe</span>
+                  <span id="out_left_toe" class="pill w-20 text-center">—</span>
+                  <div class="nudge">
+                    <button class="nbtn" data-nudge="lt" data-delta="-0.5">–</button>
+                    <span id="nval_lt" class="nval">+0.0</span>
+                    <button class="nbtn" data-nudge="lt" data-delta="0.5">+</button>
+                    <button class="nbtn" data-reset="lt" title="reset">↺</button>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-gray-600">Heel</span>
+                  <span id="out_left_heel" class="pill w-20 text-center">—</span>
+                  <div class="nudge">
+                    <button class="nbtn" data-nudge="lh" data-delta="-0.5">–</button>
+                    <span id="nval_lh" class="nval">+0.0</span>
+                    <button class="nbtn" data-nudge="lh" data-delta="0.5">+</button>
+                    <button class="nbtn" data-reset="lh" title="reset">↺</button>
+                  </div>
+                </div>
+              </div>
+              <div class="border rounded-lg p-3 bg-white">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-sm font-semibold">Right Ski</div>
+                  <div class="text-[11px] text-gray-500">nudge step ±0.5</div>
+                </div>
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs text-gray-600">Toe</span>
+                  <span id="out_right_toe" class="pill w-20 text-center">—</span>
+                  <div class="nudge">
+                    <button class="nbtn" data-nudge="rt" data-delta="-0.5">–</button>
+                    <span id="nval_rt" class="nval">+0.0</span>
+                    <button class="nbtn" data-nudge="rt" data-delta="0.5">+</button>
+                    <button class="nbtn" data-reset="rt" title="reset">↺</button>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-gray-600">Heel</span>
+                  <span id="out_right_heel" class="pill w-20 text-center">—</span>
+                  <div class="nudge">
+                    <button class="nbtn" data-nudge="rh" data-delta="-0.5">–</button>
+                    <span id="nval_rh" class="nval">+0.0</span>
+                    <button class="nbtn" data-nudge="rh" data-delta="0.5">+</button>
+                    <button class="nbtn" data-reset="rh" title="reset">↺</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <button id="btnResetAll" class="btn-outline">Reset All Nudges</button>
+            </div>
           </div>
 
           <div class="mt-4 flex items-center gap-3">
-            <button id="btnCopy" class="btn-outline">Copy DIN <span class="kbd">⌘C</span></button>
+            <button id="btnCopy" class="btn-outline">
+              Copy All <span class="kbd">⌘C</span>
+            </button>
             <button id="btnOpenLiab" class="btn">Open Liability</button>
           </div>
 
           <p class="text-[11px] text-gray-500 mt-3 leading-relaxed">
-            <strong>Disclaimer:</strong> Quick-reference DIN suggestion derived from an ISO-style chart.
-            Always cross-check with current ISO 11088/manufacturer charts & shop procedures.
+            <strong>Note:</strong> Base DIN is mirrored to all four positions. Use nudges to apply model-specific
+            or shop-specific asymmetry as needed. Always verify against current ISO 11088/manufacturer charts and shop procedures.
           </p>
         </div>
       </div>
@@ -135,9 +203,12 @@
   </div>
 
   <script>
-    // ===== Runtime config =====
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 30000; // 30s
+    const REFRESH_MS = 30000;
+
+    // nudge state (in DIN units)
+    const NUDGE_STEP = 0.5;
+    const nudges = { lt: 0, lh: 0, rt: 0, rh: 0 }; // left toe/heel, right toe/heel
 
     function showToast(msg) {
       const t = document.getElementById('toast');
@@ -152,6 +223,14 @@
       if (!r.ok) throw new Error(`intake-details ${r.status}`);
       return await r.json();
     }
+    async function fetchLatestLiability({ tag, email }) {
+      const q = new URLSearchParams();
+      if (tag) q.set("tag", tag);
+      if (email) q.set("email", email);
+      const r = await fetch(`/api/liability-latest?${q.toString()}`);
+      if (!r.ok) return {};
+      return await r.json();
+    }
 
     function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }) {
       const p = new URLSearchParams();
@@ -162,124 +241,121 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // ===== DIN calc tables (same as v1) =====
+    // ===== DIN tables =====
     const CODE_BY_WEIGHT = [
-      { max:  48, code: 0 }, { max:  57, code: 1 }, { max:  66, code: 2 }, { max:  78, code: 3 },
-      { max:  91, code: 4 }, { max: 109, code: 5 }, { max: 126, code: 6 }, { max: 147, code: 7 },
-      { max: 169, code: 8 }, { max: 191, code: 9 }, { max: 213, code:10 }, { max: 235, code:11 },
-      { max: 257, code:12 }, { max: 279, code:13 }, { max: 301, code:14 }, { max: 1000, code:15 },
+      { max:48,code:0 },{ max:57,code:1 },{ max:66,code:2 },{ max:78,code:3 },
+      { max:91,code:4 },{ max:109,code:5 },{ max:126,code:6 },{ max:147,code:7 },
+      { max:169,code:8 },{ max:191,code:9 },{ max:213,code:10 },{ max:235,code:11 },
+      { max:257,code:12 },{ max:279,code:13 },{ max:301,code:14 },{ max:1000,code:15 },
     ];
     const CODE_BY_HEIGHT_CM = [
-      { max: 148, code: 0 }, { max: 157, code: 1 }, { max: 166, code: 2 },
-      { max: 176, code: 3 }, { max: 186, code: 4 }, { max: 196, code: 5 }, { max: 999, code: 6 },
+      { max:148,code:0 },{ max:157,code:1 },{ max:166,code:2 },
+      { max:176,code:3 },{ max:186,code:4 },{ max:196,code:5 },{ max:999,code:6 },
     ];
     const DIN_TABLE = [
-      [0.75, 0.75, 0.75, 0.75, 1.00, 1.00],
-      [0.75, 0.75, 1.00, 1.00, 1.50, 1.50],
-      [0.75, 1.00, 1.50, 1.50, 2.00, 2.00],
-      [1.00, 1.50, 2.00, 2.25, 2.50, 3.00],
-      [1.50, 2.00, 2.50, 3.00, 3.50, 3.50],
-      [2.00, 2.50, 3.00, 3.50, 4.00, 4.50],
-      [2.50, 3.00, 3.50, 4.00, 4.50, 5.00],
-      [3.00, 3.50, 4.50, 5.00, 5.50, 6.00],
-      [3.50, 4.50, 5.50, 6.00, 6.50, 7.00],
-      [4.00, 5.50, 6.50, 7.50, 8.00, 8.50],
-      [4.50, 6.00, 7.50, 8.50, 9.50, 10.0],
-      [5.50, 7.00, 8.50, 9.50, 10.5, 11.5],
-      [6.50, 8.00,10.0, 11.0, 12.0, 13.5],
-      [7.50, 9.50,11.0, 12.5, 14.0, 15.5],
-      [8.50,11.0, 12.5, 14.0, 16.0, 17.5],
-      [10.0,12.0, 14.0, 16.0, 18.0, 20.0],
+      [0.75,0.75,0.75,0.75,1.00,1.00],
+      [0.75,0.75,1.00,1.00,1.50,1.50],
+      [0.75,1.00,1.50,1.50,2.00,2.00],
+      [1.00,1.50,2.00,2.25,2.50,3.00],
+      [1.50,2.00,2.50,3.00,3.50,3.50],
+      [2.00,2.50,3.00,3.50,4.00,4.50],
+      [2.50,3.00,3.50,4.00,4.50,5.00],
+      [3.00,3.50,4.50,5.00,5.50,6.00],
+      [3.50,4.50,5.50,6.00,6.50,7.00],
+      [4.00,5.50,6.50,7.50,8.00,8.50],
+      [4.50,6.00,7.50,8.50,9.50,10.0],
+      [5.50,7.00,8.50,9.50,10.5,11.5],
+      [6.50,8.00,10.0,11.0,12.0,13.5],
+      [7.50,9.50,11.0,12.5,14.0,15.5],
+      [8.50,11.0,12.5,14.0,16.0,17.5],
+      [10.0,12.0,14.0,16.0,18.0,20.0]
     ];
-    function bslBandIndex(bsl) {
-      if (bsl >= 231 && bsl <= 250) return 0;
-      if (bsl >= 251 && bsl <= 270) return 1;
-      if (bsl >= 271 && bsl <= 290) return 2;
-      if (bsl >= 291 && bsl <= 310) return 3;
-      if (bsl >= 311 && bsl <= 330) return 4;
-      if (bsl >= 331 && bsl <= 350) return 5;
-      if (bsl < 231) return 0; return 5;
-    }
-    function codeFromWeightLbs(w) { for (const r of CODE_BY_WEIGHT) if (w <= r.max) return r.code; return 0; }
-    function codeFromHeightCm(cm) { for (const r of CODE_BY_HEIGHT_CM) if (cm <= r.max) return r.code; return 0; }
-    function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
-    function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis = "auto", ageAdj = "auto" }) {
-      const h_cm = height_in ? (Number(height_in) * 2.54) : NaN;
+    function bslBandIndex(bsl){ if(bsl>=231&&bsl<=250)return 0;if(bsl>=251&&bsl<=270)return 1;if(bsl>=271&&bsl<=290)return 2;if(bsl>=291&&bsl<=310)return 3;if(bsl>=311&&bsl<=330)return 4;if(bsl>=331&&bsl<=350)return 5;if(bsl<231)return 0;return 5;}
+    function codeFromWeightLbs(w){ for(const r of CODE_BY_WEIGHT) if(w<=r.max) return r.code; return 0; }
+    function codeFromHeightCm(cm){ for(const r of CODE_BY_HEIGHT_CM) if(cm<=r.max) return r.code; return 0; }
+    function clamp(n,lo,hi){ return Math.max(lo,Math.min(hi,n)); }
+    function roundToHalf(x){ if(!Number.isFinite(x)) return ""; return (Math.round(x*2)/2).toFixed(1); }
+
+    function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis="auto", ageAdj="auto" }){
+      const h_cm = height_in ? (Number(height_in)*2.54) : NaN;
       const w_lb = Number(weight_lb);
-      if (!Number.isFinite(w_lb)) return { din: "", code: "", band: "", explain: "Missing weight" };
+      if(!Number.isFinite(w_lb)) return { din:"", code:"", band:"", explain:"Missing weight" };
       const codeW = codeFromWeightLbs(w_lb);
       const codeH = Number.isFinite(h_cm) ? codeFromHeightCm(h_cm) : codeW;
-      let baseCode;
-      if (basis === "weight") baseCode = codeW;
-      else if (basis === "height") baseCode = codeH;
-      else baseCode = Math.min(codeW, codeH);
+      let baseCode = basis==="weight"?codeW: basis==="height"?codeH: Math.min(codeW,codeH);
 
       let code = baseCode;
-      if (ageAdj === "auto") {
-        if (Number.isFinite(age_years) && (age_years <= 10 || age_years >= 50)) code -= 1;
-      } else if (ageAdj === "minus1") code -= 1;
+      if(ageAdj==="auto"){ if(Number.isFinite(age_years)&&(age_years<=10||age_years>=50)) code-=1; }
+      else if(ageAdj==="minus1"){ code-=1; }
 
-      if (skierType === "I") code -= 1;
-      if (skierType === "III") code += 1;
+      if(skierType==="I") code-=1;
+      if(skierType==="III") code+=1;
 
-      code = clamp(code, 0, DIN_TABLE.length - 1);
+      code = clamp(code, 0, DIN_TABLE.length-1);
       const band = bslBandIndex(Number(bsl_mm));
-      const din = DIN_TABLE[code][band];
-      const codeLetter = String.fromCharCode(65 + code);
-      const bands = ["231–250","251–270","271–290","291–310","311–330","331–350"];
-      const explain =
-        `Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseCode)}), `
-        + `age adj: ${ageAdj}, type: ${skierType || "II"}, BSL band ${bands[band]}.`;
-      return { din: din?.toFixed(1), code: codeLetter, band: bands[band], explain };
+      const rawDIN = DIN_TABLE[code][band];
+      const din = roundToHalf(rawDIN);
+      const codeLetter = String.fromCharCode(65+code);
+      const bands=["231–250","251–270","271–290","291–310","311–330","331–350"];
+      const explain = `Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseCode)}), age adj: ${ageAdj}, type: ${skierType||"II"}, BSL band ${bands[band]}.`;
+      return { din, code: codeLetter, band: bands[band], explain };
     }
 
-    // ===== UI wiring =====
     const tb = document.getElementById("tbody");
     const dinModal = document.getElementById("dinModal");
     const dinClose = document.getElementById("dinClose");
     const outDin = () => document.getElementById("out_din");
     const outSum = () => document.getElementById("out_summary");
+    const outLT = () => document.getElementById("out_left_toe");
+    const outLH = () => document.getElementById("out_left_heel");
+    const outRT = () => document.getElementById("out_right_toe");
+    const outRH = () => document.getElementById("out_right_heel");
     const inpBSL = () => document.getElementById("inp_bsl");
     const inpType = () => document.getElementById("inp_type");
     const inpAgeAdj = () => document.getElementById("inp_ageAdj");
     const inpBasis = () => document.getElementById("inp_basis");
+    const bslHint = () => document.getElementById("bsl_hint");
+    const nval = id => document.getElementById(`nval_${id}`);
 
     let currentRow = null;
 
-    function openDINModal(intake, row) {
-      currentRow = {
-        email: row.email || "",
-        lightspeed_id: row.lightspeed_id || "",
-        first_name: row.first_name || intake.first_name || "",
-        last_name: row.last_name || intake.last_name || "",
-        waiver_id: row.waiver_id || "",
-        age: Number(intake.age) || NaN,
-        weight_lb: Number(intake.weight_lb) || NaN,
-        height_in: Number(intake.height_in) || NaN,
-        skier_type: (intake.skier_type || "").toUpperCase() // "I" | "II" | "III" | ""
-      };
+    function renderWithNudges(baseDin){
+      function add(n){ if(!baseDin) return "—"; const v = (parseFloat(baseDin)||0) + n; return roundToHalf(v); }
+      outLT().textContent = add(nudges.lt);
+      outLH().textContent = add(nudges.lh);
+      outRT().textContent = add(nudges.rt);
+      outRH().textContent = add(nudges.rh);
+      nval('lt').textContent = (nudges.lt>=0?'+':'') + nudges.lt.toFixed(1);
+      nval('lh').textContent = (nudges.lh>=0?'+':'') + nudges.lh.toFixed(1);
+      nval('rt').textContent = (nudges.rt>=0?'+':'') + nudges.rt.toFixed(1);
+      nval('rh').textContent = (nudges.rh>=0?'+':'') + nudges.rh.toFixed(1);
+    }
 
-      // Fill Intake snapshot (height in cm)
-      document.getElementById("i_name").textContent = [currentRow.first_name, currentRow.last_name].filter(Boolean).join(" ") || "—";
-      document.getElementById("i_email").textContent = currentRow.email || "—";
-      document.getElementById("i_age").textContent = Number.isFinite(currentRow.age) ? currentRow.age : "—";
-      document.getElementById("i_weight").textContent = Number.isFinite(currentRow.weight_lb) ? `${currentRow.weight_lb} lb` : "—";
-      const hcm = Number.isFinite(currentRow.height_in) ? Math.round(currentRow.height_in * 2.54) : null;
-      document.getElementById("i_height").textContent = hcm ? `${hcm} cm` : "—";
-      document.getElementById("i_skier").textContent = currentRow.skier_type || "—";
+    function resetAllNudges(){
+      nudges.lt = nudges.lh = nudges.rt = nudges.rh = 0;
+      renderWithNudges(outDin().textContent);
+    }
 
-      // Defaults: prefer Intake skier type if available
-      inpBSL().value = "";
-      inpType().value = (currentRow.skier_type === "I" || currentRow.skier_type === "II" || currentRow.skier_type === "III")
-        ? currentRow.skier_type : "II";
-      inpAgeAdj().value = "auto";
-      inpBasis().value = "auto";
-
-      outDin().textContent = "—";
-      outSum().textContent = "";
-
-      dinModal.classList.remove("hidden");
-      dinModal.classList.add("flex");
+    function attachNudgeHandlers(){
+      document.querySelectorAll('[data-nudge]').forEach(btn=>{
+        btn.onclick = ()=>{
+          const key = btn.getAttribute('data-nudge'); // lt/lh/rt/rh
+          const delta = parseFloat(btn.getAttribute('data-delta') || '0');
+          nudges[key] = (nudges[key] || 0) + delta;
+          // clamp to sensible range
+          if (nudges[key] > 3) nudges[key] = 3;
+          if (nudges[key] < -3) nudges[key] = -3;
+          renderWithNudges(outDin().textContent);
+        };
+      });
+      document.querySelectorAll('[data-reset]').forEach(btn=>{
+        btn.onclick = ()=>{
+          const key = btn.getAttribute('data-reset');
+          nudges[key] = 0;
+          renderWithNudges(outDin().textContent);
+        };
+      });
+      document.getElementById('btnResetAll').onclick = resetAllNudges;
     }
 
     function recalc() {
@@ -295,11 +371,71 @@
       });
       outDin().textContent = res.din || "—";
       outSum().textContent = res.din ? `Skier code ${res.code}, ${res.explain}` : "";
+      renderWithNudges(res.din || "");
+    }
+
+    async function fetchLatestLiabilityWrapper(lsid, email){
+      const tag = lsid ? `ls_${lsid}` : "";
+      try { return await fetchLatestLiability({ tag, email }); }
+      catch { return {}; }
+    }
+
+    function openDINModal(intake, row, prior) {
+      currentRow = {
+        email: row.email || "",
+        lightspeed_id: row.lightspeed_id || "",
+        first_name: row.first_name || intake.first_name || "",
+        last_name: row.last_name || intake.last_name || "",
+        waiver_id: row.waiver_id || "",
+        age: Number(intake.age) || NaN,
+        weight_lb: Number(intake.weight_lb) || NaN,
+        height_in: Number(intake.height_in) || NaN,
+        skier_type: (intake.skier_type || "").toUpperCase()
+      };
+
+      document.getElementById("i_name").textContent = [currentRow.first_name, currentRow.last_name].filter(Boolean).join(" ") || "—";
+      document.getElementById("i_email").textContent = currentRow.email || "—";
+      document.getElementById("i_age").textContent = Number.isFinite(currentRow.age) ? currentRow.age : "—";
+      document.getElementById("i_weight").textContent = Number.isFinite(currentRow.weight_lb) ? `${currentRow.weight_lb} lb` : "—";
+      const hcm = Number.isFinite(currentRow.height_in) ? Math.round(currentRow.height_in * 2.54) : null;
+      document.getElementById("i_height").textContent = hcm ? `${hcm} cm` : "—";
+      document.getElementById("i_skier").textContent = currentRow.skier_type || "—";
+
+      // Defaults
+      inpBSL().value = "";
+      inpType().value = (currentRow.skier_type==="I"||currentRow.skier_type==="II"||currentRow.skier_type==="III") ? currentRow.skier_type : "II";
+      inpAgeAdj().value = "auto";
+      inpBasis().value = "auto";
+      bslHint().textContent = "";
+
+      // Prefill prior BSL if any
+      if (prior && prior.bsl_mm) {
+        inpBSL().value = prior.bsl_mm;
+        bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm from ${prior.signed_on ? new Date(prior.signed_on).toLocaleString() : "past liability"}.`;
+      }
+
+      // reset nudges
+      resetAllNudges();
+
+      outDin().textContent = "—";
+      outSum().textContent = "";
+      renderWithNudges("");
+
+      dinModal.classList.remove("hidden");
+      dinModal.classList.add("flex");
+
+      // Initial calc in case BSL was prefilled
+      recalc();
     }
 
     document.getElementById("btnCopy").addEventListener("click", async () => {
-      const txt = `DIN: ${outDin().textContent} (${outSum().textContent})`;
-      try { await navigator.clipboard.writeText(txt); showToast("DIN copied"); } catch { showToast("Copy failed"); }
+      const base = outDin().textContent;
+      const txt =
+        `DIN ${base} — `
+        + `L Toe ${outLT().textContent}, L Heel ${outLH().textContent}, `
+        + `R Toe ${outRT().textContent}, R Heel ${outRH().textContent}. `
+        + `${outSum().textContent}`;
+      try { await navigator.clipboard.writeText(txt); showToast("DIN set copied"); } catch { showToast("Copy failed"); }
     });
 
     document.getElementById("btnOpenLiab").addEventListener("click", () => {
@@ -314,7 +450,7 @@
     });
 
     [ "change", "keyup", "input" ].forEach(evt => {
-      inpBSL().addEventListener(evt, recalc);
+      inpBSL().addEventListener(evt, recalc);   // real-time on BSL input
       inpType().addEventListener(evt, recalc);
       inpAgeAdj().addEventListener(evt, recalc);
       inpBasis().addEventListener(evt, recalc);
@@ -387,11 +523,16 @@
             try {
               const details = await fetchIntakeDetails(intakeWaiverId);
               details.waiver_id = intakeWaiverId;
-              openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId });
-              recalc();
+
+              const tag = lsid ? `ls_${lsid}` : "";
+              const prior = await fetchLatestLiability({ tag, email });
+
+              openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId }, prior);
+              attachNudgeHandlers(); // ensure handlers exist
+              // live calc happens on open and on input
             } catch (e) {
-              console.error("intake-details failed:", e);
-              showToast("Could not load intake measurements.");
+              console.error("intake-details/prior-liability failed:", e);
+              showToast("Could not load intake or prior liability.");
             }
           }
         });
