@@ -15,9 +15,6 @@
     .input { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; }
     .select { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; }
     .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; }
-    .nudge { @apply inline-flex items-center gap-1; }
-    .nbtn { @apply rounded-md border border-gray-300 px-2 py-[2px] text-xs bg-white hover:bg-gray-50; }
-    .nval { @apply inline-block min-w-[2.5rem] text-center text-xs text-gray-700; }
   </style>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
@@ -49,7 +46,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.2</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.4-nonudge-2dp</div>
     </div>
   </main>
 
@@ -125,64 +122,30 @@
             </div>
             <div class="mt-1 text-xs text-gray-600" id="out_summary"></div>
 
-            <!-- Per-foot outputs with independent nudges -->
+            <!-- Per-foot outputs (mirrors base result; no nudges) -->
             <div class="mt-4 grid grid-cols-2 gap-3">
               <div class="border rounded-lg p-3 bg-white">
-                <div class="flex items-center justify-between mb-2">
-                  <div class="text-sm font-semibold">Left Binding</div>
-                  <div class="text-[11px] text-gray-500">nudge step ±0.5</div>
-                </div>
+                <div class="text-sm font-semibold mb-2">Left Binding</div>
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-xs text-gray-600">Toe</span>
                   <span id="out_left_toe" class="pill w-20 text-center">—</span>
-                  <div class="nudge">
-                    <button class="nbtn" data-nudge="lt" data-delta="-0.5">–</button>
-                    <span id="nval_lt" class="nval">+0.0</span>
-                    <button class="nbtn" data-nudge="lt" data-delta="0.5">+</button>
-                    <button class="nbtn" data-reset="lt" title="reset">↺</button>
-                  </div>
                 </div>
                 <div class="flex items-center justify-between">
                   <span class="text-xs text-gray-600">Heel</span>
                   <span id="out_left_heel" class="pill w-20 text-center">—</span>
-                  <div class="nudge">
-                    <button class="nbtn" data-nudge="lh" data-delta="-0.5">–</button>
-                    <span id="nval_lh" class="nval">+0.0</span>
-                    <button class="nbtn" data-nudge="lh" data-delta="0.5">+</button>
-                    <button class="nbtn" data-reset="lh" title="reset">↺</button>
-                  </div>
                 </div>
               </div>
               <div class="border rounded-lg p-3 bg-white">
-                <div class="flex items-center justify-between mb-2">
-                  <div class="text-sm font-semibold">Right Binding</div>
-                  <div class="text-[11px] text-gray-500">nudge step ±0.5</div>
-                </div>
+                <div class="text-sm font-semibold mb-2">Right Binding</div>
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-xs text-gray-600">Toe</span>
                   <span id="out_right_toe" class="pill w-20 text-center">—</span>
-                  <div class="nudge">
-                    <button class="nbtn" data-nudge="rt" data-delta="-0.5">–</button>
-                    <span id="nval_rt" class="nval">+0.0</span>
-                    <button class="nbtn" data-nudge="rt" data-delta="0.5">+</button>
-                    <button class="nbtn" data-reset="rt" title="reset">↺</button>
-                  </div>
                 </div>
                 <div class="flex items-center justify-between">
                   <span class="text-xs text-gray-600">Heel</span>
                   <span id="out_right_heel" class="pill w-20 text-center">—</span>
-                  <div class="nudge">
-                    <button class="nbtn" data-nudge="rh" data-delta="-0.5">–</button>
-                    <span id="nval_rh" class="nval">+0.0</span>
-                    <button class="nbtn" data-nudge="rh" data-delta="0.5">+</button>
-                    <button class="nbtn" data-reset="rh" title="reset">↺</button>
-                  </div>
                 </div>
               </div>
-            </div>
-
-            <div class="mt-3">
-              <button id="btnResetAll" class="btn-outline">Reset All Nudges</button>
             </div>
           </div>
 
@@ -194,8 +157,7 @@
           </div>
 
           <p class="text-[11px] text-gray-500 mt-3 leading-relaxed">
-            <strong>Note:</strong> Base DIN mirrors to all four positions. Use nudges for model-specific adjustments.
-            Always verify against current ISO 11088/manufacturer charts and shop procedures.
+            <strong>Note:</strong> Base DIN mirrors to all four positions. Always verify against current ISO 11088/manufacturer charts and shop procedures.
           </p>
         </div>
       </div>
@@ -204,11 +166,7 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 30000;
-
-    // nudge state (in DIN units)
-    const NUDGE_STEP = 0.5;
-    const nudges = { lt: 0, lh: 0, rt: 0, rh: 0 };
+    const REFRESH_MS = 10000; // 10s with visibility pause (kept from prior)
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2500); }
     function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
@@ -225,7 +183,7 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // ===== DIN tables =====
+    // ===== DIN tables / lookups =====
     const CODE_BY_WEIGHT = [
       { max:  29, code: 0 }, { max:  38, code: 1 }, { max:  47, code: 2 }, { max:  56, code: 3 },
       { max:  66, code: 4 }, { max:  78, code: 5 }, { max:  91, code: 6 }, { max: 107, code: 7 },
@@ -255,145 +213,62 @@
       [ null, null, null, null,  null, 12.00,11.00,10.50],
     ];
 
-    // Safer BSL band index (handles NaN)
-   function bslBandIndex(bsl) {
+    function bslBandIndex(bsl) {
       const x = Number(bsl);
       if (!Number.isFinite(x)) return 0;
-      if (x < 231) return 0;              // "<231"
-      if (x <= 250) return 1;             // "231–250"
-      if (x <= 270) return 2;             // "251–270"
-      if (x <= 290) return 3;             // "271–290"
-      if (x <= 310) return 4;             // "291–310"
-      if (x <= 330) return 5;             // "311–330"  ← BSL 315 maps HERE
-      if (x <= 350) return 6;             // "331–350"
-      return 7;                           // ">350"
+      if (x < 231) return 0;
+      if (x <= 250) return 1;
+      if (x <= 270) return 2;
+      if (x <= 290) return 3;
+      if (x <= 310) return 4;
+      if (x <= 330) return 5; // BSL 315 → here
+      if (x <= 350) return 6;
+      return 7;
     }
+    function codeFromWeightLbs(w){ for (const r of CODE_BY_WEIGHT) if (w <= r.max) return r.code; return 0; }
+    function codeFromHeightCm(cm){ for (const r of CODE_BY_HEIGHT_CM) if (cm <= r.max) return r.code; return 0; }
 
-    // ==== Helpers (lookup + rounding for nudges) ====
-    function codeFromWeightLbs(w){
-      for (const r of CODE_BY_WEIGHT) if (w <= r.max) return r.code;
-      return 0;
-    }
-    function codeFromHeightCm(cm){
-      for (const r of CODE_BY_HEIGHT_CM) if (cm <= r.max) return r.code;
-      return 0;
-    }
-    function roundToHalf(x){
-      if (!Number.isFinite(x)) return "";
-      return (Math.round(x * 2) / 2).toFixed(1);
-    }
-
-    // Height conversion (ft + in -> cm)
-    function heightFeetInchesToCm(height_ft, height_in = 0) {
-      const ft = Number(height_ft);
-      const inch = Number(height_in);
-      if (!Number.isFinite(ft) && !Number.isFinite(inch)) return NaN;
-      const f = Number.isFinite(ft) ? ft : 0;
-      const i = Number.isFinite(inch) ? inch : 0;
-      return (f * 12 + i) * 2.54;
-    }
-
-    // Base code from weight/height, then age/type adjustments; clamp 0..15
-    function baseCodeFromWeightHeightAgeType(weight_lb, height_ft, height_in, age_years, skierType) {
-      const codeW = codeFromWeightLbs(Number(weight_lb));
-      const h_cm  = heightFeetInchesToCm(height_ft, height_in);
-      const codeH = codeFromHeightCm(h_cm);
-
-      let baseCode = Math.min(codeW, codeH); // conservative
-
-      // Age (≤9 or ≥50 → −1)
-      if (Number.isFinite(age_years) && (age_years <= 9 || age_years >= 50)) {
-        baseCode -= 1;
-      }
-
-      // Skier type (I +0, II +1, III +2)
-      const type = (skierType || "").toString().toUpperCase();
-      if (type === "II") baseCode += 1;
-      else if (type === "III") baseCode += 2;
-
-      return Math.max(0, Math.min(15, baseCode));
-    }
-
-    function skierCodeLetter(baseCode) {
-      return String.fromCharCode(65 + baseCode);
-    }
-
-    function computeFinalDIN(baseCode, bsl_mm) {
-      const band = bslBandIndex(Number(bsl_mm));
-      return DIN_TABLE[baseCode][band]; // may be null
-    }
-
-    // 8-column band labels
     const BSL_BANDS = ["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
 
-    // Wrapper that returns { din, code, band, explain } for the UI
+    // Compute DIN (NO rounding; show as two-decimal string)
     function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis = "auto", ageAdj = "auto" }) {
       const w = Number(weight_lb);
-      if (!Number.isFinite(w)) return { din:"", code:"", band:"", explain:"Missing weight" };
+      if (!Number.isFinite(w)) return { din:null, code:"", band:"", explain:"Missing weight" };
 
-      // Intake height is total inches → split to ft/in
       const totalIn = Number(height_in);
       const ft = Number.isFinite(totalIn) ? Math.floor(totalIn / 12) : 0;
       const inch = Number.isFinite(totalIn) ? (totalIn - ft * 12) : 0;
 
-      // Weight/height codes for explanation
       const codeW = codeFromWeightLbs(w);
       const h_cm = Number.isFinite(totalIn) ? totalIn * 2.54 : NaN;
       const codeH = Number.isFinite(h_cm) ? codeFromHeightCm(h_cm) : codeW;
 
-      // Basis pick (weight | height | auto = lower)
       const baseBeforeAdj =
         basis === "weight" ? codeW :
         basis === "height" ? codeH :
         Math.min(codeW, codeH);
 
-      // Start with consolidated function (auto age rule baked in)
-      let baseCode = baseCodeFromWeightHeightAgeType(w, ft, inch, age_years, skierType);
-
-      // If basis is forced, recompute starting from baseBeforeAdj and apply chosen ageAdj
-      if (basis !== "auto") {
-        let code = baseBeforeAdj;
-
-        // Age adjustment according to ageAdj selection
-        if (ageAdj === "auto") {
-          if (Number.isFinite(age_years) && (age_years <= 9 || age_years >= 50)) code -= 1;
-        } else if (ageAdj === "minus1") {
-          code -= 1;
-        } // "none" → no change
-
-        // Skier type (I +0, II +1, III +2)
-        const type = (skierType || "").toString().toUpperCase();
-        if (type === "II") code += 1;
-        else if (type === "III") code += 2;
-
-        baseCode = Math.max(0, Math.min(15, code));
-      } else {
-        // basis === "auto" → overlay manual ageAdj (so UI control still works)
-        if (ageAdj === "minus1") {
-          baseCode = Math.max(0, baseCode - 1);
-        } else if (
-          ageAdj === "none" &&
-          Number.isFinite(age_years) &&
-          (age_years <= 9 || age_years >= 50)
-        ) {
-          // undo the auto -1 that baseCodeFrom... would have applied
-          baseCode = Math.min(15, baseCode + 1);
-        }
+      // Age/type adjustment
+      let code = baseBeforeAdj;
+      if (ageAdj === "auto") {
+        if (Number.isFinite(age_years) && (age_years <= 9 || age_years >= 50)) code -= 1;
+      } else if (ageAdj === "minus1") {
+        code -= 1;
       }
+      const type = (skierType || "").toString().toUpperCase();
+      if (type === "II") code += 1;
+      else if (type === "III") code += 2;
 
-      // Final DIN (no rounding)
+      const baseCode = Math.max(0, Math.min(15, code));
       const bandIdx = bslBandIndex(Number(bsl_mm));
-      const din = computeFinalDIN(baseCode, bsl_mm);
+      const dinRaw = DIN_TABLE[baseCode][bandIdx]; // keep as-is
 
-      const codeLetter = skierCodeLetter(baseCode);
-      const explain =
-        `Base code (W:${skierCodeLetter(codeW)} / H:${skierCodeLetter(codeH)} → ${skierCodeLetter(baseBeforeAdj)}), ` +
-        `age adj: ${ageAdj}, type: ${(skierType || "II").toUpperCase()}, BSL band ${BSL_BANDS[bandIdx]}.`;
+      const codeLetter = String.fromCharCode(65 + baseCode);
+      const explain = `Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type||"II"}, BSL band ${BSL_BANDS[bandIdx]}.`;
 
-      return { din, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
+      return { din: dinRaw, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
     }
 
-    // ===== UI wiring =====
     const tb = document.getElementById("tbody");
     const dinModal = document.getElementById("dinModal");
     const dinClose = document.getElementById("dinClose");
@@ -408,63 +283,31 @@
     const inpAgeAdj = () => document.getElementById("inp_ageAdj");
     const inpBasis = () => document.getElementById("inp_basis");
     const bslHint = () => document.getElementById("bsl_hint");
-    const nval = id => document.getElementById(`nval_${id}`);
 
     let currentRow = null;
 
-    function renderWithNudges(baseDin){
-      function add(n){
-        if(!baseDin) return "—";
-        const v = (parseFloat(baseDin)||0) + n;
-        return roundToHalf(v);
-      }
-      outLT().textContent = add(nudges.lt);
-      outLH().textContent = add(nudges.lh);
-      outRT().textContent = add(nudges.rt);
-      outRH().textContent = add(nudges.rh);
-      nval('lt').textContent = (nudges.lt>=0?'+':'') + nudges.lt.toFixed(1);
-      nval('lh').textContent = (nudges.lh>=0?'+':'') + nudges.lh.toFixed(1);
-      nval('rt').textContent = (nudges.rt>=0?'+':'') + nudges.rt.toFixed(1);
-      nval('rh').textContent = (nudges.rh>=0?'+':'') + nudges.rh.toFixed(1);
-    }
-    function resetAllNudges(){ nudges.lt = nudges.lh = nudges.rt = nudges.rh = 0; renderWithNudges(outDin().textContent); }
-
-    function attachNudgeHandlers(){
-      document.querySelectorAll('[data-nudge]').forEach(btn=>{
-        btn.onclick = ()=>{
-          const key = btn.getAttribute('data-nudge');
-          const delta = parseFloat(btn.getAttribute('data-delta') || '0');
-          nudges[key] = (nudges[key] || 0) + delta;
-          if (nudges[key] > 3) nudges[key] = 3;
-          if (nudges[key] < -3) nudges[key] = -3;
-          renderWithNudges(outDin().textContent);
-        };
-      });
-      document.querySelectorAll('[data-reset]').forEach(btn=>{
-        btn.onclick = ()=>{
-          const key = btn.getAttribute('data-reset');
-          nudges[key] = 0;
-          renderWithNudges(outDin().textContent);
-        };
-      });
-      document.getElementById('btnResetAll').onclick = resetAllNudges;
+    function reflectBaseDin(val){
+      const s = (val == null || !Number.isFinite(val)) ? "—" : Number(val).toFixed(2);
+      outDin().textContent = s;
+      outLT().textContent = s;
+      outLH().textContent = s;
+      outRT().textContent = s;
+      outRH().textContent = s;
     }
 
     function recalc() {
       if (!currentRow) return;
       const res = computeDIN({
         weight_lb: currentRow.weight_lb,
-        height_in: currentRow.height_in, // total inches from intake
+        height_in: currentRow.height_in,
         age_years: currentRow.age,
         skierType: inpType().value,
         bsl_mm: Number(inpBSL().value),
         basis: inpBasis().value,
         ageAdj: inpAgeAdj().value
       });
-      const baseDin = (res.din == null ? "—" : String(res.din));
-      outDin().textContent = baseDin;
-      outSum().textContent = res.din ? `Skier code ${res.code}, ${res.explain}` : "";
-      renderWithNudges(baseDin);
+      reflectBaseDin(res.din);
+      outSum().textContent = (res.din == null) ? "" : `Skier code ${res.code}, ${res.explain}`;
     }
 
     async function fetchLatestLiabilityWrapper(lsid, email){
@@ -482,7 +325,7 @@
         waiver_id: row.waiver_id || "",
         age: Number(intake.age) || NaN,
         weight_lb: Number(intake.weight_lb) || NaN,
-        height_in: Number(intake.height_in) || NaN, // total inches from intake
+        height_in: Number(intake.height_in) || NaN,
         skier_type: (intake.skier_type || "").toUpperCase()
       };
       document.getElementById("i_name").textContent = [currentRow.first_name, currentRow.last_name].filter(Boolean).join(" ") || "—";
@@ -496,7 +339,7 @@
       inpBSL().value = "";
       inpType().value = (currentRow.skier_type==="I"||currentRow.skier_type==="II"||currentRow.skier_type==="III") ? currentRow.skier_type : "II";
       inpAgeAdj().value = "auto";
-      inpBasis().value = "weight"; // match shop flow & chart
+      inpBasis().value = "weight";
       bslHint().textContent = "";
 
       if (prior && prior.bsl_mm) {
@@ -504,8 +347,8 @@
         bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm from ${prior.signed_on ? new Date(prior.signed_on).toLocaleString() : "past liability"}.`;
       }
 
-      resetAllNudges();
-      outDin().textContent = "—"; outSum().textContent = ""; renderWithNudges("");
+      reflectBaseDin(null);
+      outSum().textContent = "";
 
       dinModal.classList.remove("hidden");
       dinModal.classList.add("flex");
@@ -514,8 +357,8 @@
     }
 
     document.getElementById("btnCopy").addEventListener("click", async () => {
-      const base = outDin().textContent;
-      const txt = `DIN ${base} — L Toe ${outLT().textContent}, L Heel ${outLH().textContent}, R Toe ${outRT().textContent}, R Heel ${outRH().textContent}. ${outSum().textContent}`;
+      const s = outDin().textContent;
+      const txt = `DIN ${s} — L Toe ${outLT().textContent}, L Heel ${outLH().textContent}, R Toe ${outRT().textContent}, R Heel ${outRH().textContent}. ${outSum().textContent}`;
       try { await navigator.clipboard.writeText(txt); showToast("DIN set copied"); } catch { showToast("Copy failed"); }
     });
 
@@ -531,13 +374,13 @@
     });
 
     [ "change", "keyup", "input" ].forEach(evt => {
-      inpBSL().addEventListener(evt, recalc);
-      inpType().addEventListener(evt, recalc);
-      inpAgeAdj().addEventListener(evt, recalc);
-      inpBasis().addEventListener(evt, recalc);
+      document.getElementById("inp_bsl").addEventListener(evt, recalc);
+      document.getElementById("inp_type").addEventListener(evt, recalc);
+      document.getElementById("inp_ageAdj").addEventListener(evt, recalc);
+      document.getElementById("inp_basis").addEventListener(evt, recalc);
     });
 
-    dinClose.addEventListener("click", () => {
+    document.getElementById("dinClose").addEventListener("click", () => {
       dinModal.classList.add("hidden");
       dinModal.classList.remove("flex");
       currentRow = null;
@@ -609,7 +452,6 @@
               const prior = await fetchLatestLiability({ tag, email });
 
               openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId }, prior);
-              attachNudgeHandlers();
             } catch (e) {
               console.error("intake-details/prior-liability failed:", e);
               showToast("Could not load intake or prior liability.");
@@ -625,7 +467,7 @@
         const data = await r.json();
         renderRows(data.rows || []);
         document.getElementById("foot").textContent =
-          `Window: ${data.from || "?"} → ${data.to || "?"}. Auto-refresh every ${Math.floor(REFRESH_MS/1000)}s.`;
+          `Window: ${data.from || "?"} → ${data.to || "?"}. Auto-refresh every ${Math.floor(REFRESH_MS/1000)}s (pauses when tab hidden).`;
       } catch (e) {
         console.error(e);
         showToast("Failed to refresh list");
@@ -633,6 +475,14 @@
     }
 
     document.getElementById("refreshBtn").addEventListener("click", refresh);
+
+    // Pause auto-refresh when hidden
+    let refreshTimer = null;
+    function startAutoRefresh(){ if (refreshTimer) clearInterval(refreshTimer); refreshTimer = setInterval(refresh, REFRESH_MS); }
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { if (refreshTimer) clearInterval(refreshTimer); }
+      else { refresh(); startAutoRefresh(); }
+    });
 
     (async () => {
       try {
@@ -644,7 +494,7 @@
         showToast("Failed to load config");
       }
       await refresh();
-      setInterval(refresh, REFRESH_MS);
+      startAutoRefresh();
     })();
   </script>
 </body>
