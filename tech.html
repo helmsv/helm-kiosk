@@ -49,7 +49,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.1</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.2</div>
     </div>
   </main>
 
@@ -121,7 +121,7 @@
             <div class="text-sm text-gray-600">Base Result</div>
             <div class="mt-1 flex items-baseline gap-3">
               <div class="text-2xl font-bold" id="out_din">—</div>
-              <div class="text-sm text-gray-500">Release value (rounded to 0.5)</div>
+              <div class="text-sm text-gray-500">Release value (chart)</div>
             </div>
             <div class="mt-1 text-xs text-gray-600" id="out_summary"></div>
 
@@ -225,74 +225,178 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // ===== DIN tables (unchanged from v6) =====
+    // ===== DIN tables =====
     const CODE_BY_WEIGHT = [
-      { max:  48, code: 0 }, { max:  57, code: 1 }, { max:  66, code: 2 }, { max:  78, code: 3 },
-      { max:  91, code: 4 }, { max: 109, code: 5 }, { max: 126, code: 6 }, { max: 147, code: 7 },
-      { max: 169, code: 8 }, { max: 191, code: 9 }, { max: 213, code:10 }, { max: 235, code:11 },
-      { max: 257, code:12 }, { max: 279, code:13 }, { max: 301, code:14 }, { max: 1000, code:15 },
+      { max:  29, code: 0 }, { max:  38, code: 1 }, { max:  47, code: 2 }, { max:  56, code: 3 },
+      { max:  66, code: 4 }, { max:  78, code: 5 }, { max:  91, code: 6 }, { max: 107, code: 7 },
+      { max: 125, code: 8 }, { max: 147, code: 9 }, { max: 174, code:10 }, { max: 209, code:11 },
+      { max: 999, code:12 },
     ];
     const CODE_BY_HEIGHT_CM = [
-      { max: 148, code: 0 }, { max: 157, code: 1 }, { max: 166, code: 2 },
-      { max: 176, code: 3 }, { max: 186, code: 4 }, { max: 196, code: 5 }, { max: 999, code: 6 },
+      { max: 148, code: 7 }, { max: 157, code: 8 }, { max: 166, code: 9 },
+      { max: 178, code: 10 }, { max: 194, code: 11 }, { max: 999, code: 12 },
     ];
     const DIN_TABLE = [
-      [0.75,0.75,0.75,1.00,1.25,1.25],
-      [0.75,0.75,1.00,1.25,1.50,1.75],
-      [0.75,1.00,1.50,1.75,2.00,2.25],
-      [1.00,1.50,2.00,2.50,3.00,3.00],
-      [1.50,2.00,2.50,3.00,3.50,3.50],
-      [2.00,2.50,3.00,3.50,4.00,4.50],
-      [2.50,3.00,3.50,4.00,4.50,5.00],
-      [3.00,3.50,4.50,5.00,5.50,6.00],
-      [4.00,5.00,6.00,6.50,7.50,8.00],
-      [4.50,5.50,6.50,7.50,8.00,8.50],
-      [5.00,6.00,7.50,8.50,9.50,10.0],
-      [5.50,7.00,8.50,9.50,10.5,11.5],
-      [6.50,8.00,10.0,11.0,12.0,13.5],
-      [7.50,9.50,11.0,12.5,14.0,15.5],
-      [8.50,11.0,12.5,14.0,16.0,17.5],
-      [10.0,12.0,14.0,16.0,18.0,20.0],
+      [0.75,0.75,0.75, null,  null,  null,  null,  null],
+      [1.00,0.75,0.75,0.75,   null,  null,  null,  null],
+      [1.50,1.25,1.25,1.00,   null,  null,  null,  null],
+      [2.00,1.75,1.50,1.50, 1.25,   null,  null,  null],
+      [2.50,2.25,2.00,1.75, 1.50, 1.50,   null,  null],
+      [3.00,2.75,2.50,2.25, 2.00, 1.75, 1.75,   null],
+      [ null,3.50,3.00,2.75, 2.50, 2.25, 2.00,   null],
+      [ null, null,3.50,3.00, 3.00, 2.75, 2.50,  null],
+      [ null, null,4.50,4.00, 3.50, 3.50, 3.00,  null],
+      [ null, null,5.50,5.00, 4.50, 4.00, 3.50, 3.00],
+      [ null, null,6.50,6.00, 5.50, 5.00, 4.50, 4.00],
+      [ null, null,7.50,7.00, 6.50, 6.00, 5.50, 5.00],
+      [ null, null, null,8.50, 8.00, 7.00, 6.50, 6.00],
+      [ null, null, null,10.00,9.50, 8.50, 8.00, 7.50],
+      [ null, null, null,11.50,11.00,10.00, 9.50, 9.00],
+      [ null, null, null, null,  null, 12.00,11.00,10.50],
     ];
+
+    // Safer BSL band index (handles NaN)
     function bslBandIndex(bsl){
-      if(bsl>=231&&bsl<=250) return 0;
-      if(bsl>=251&&bsl<=270) return 1;
-      if(bsl>=271&&bsl<=290) return 2;
-      if(bsl>=291&&bsl<=310) return 3;
-      if(bsl>=311&&bsl<=330) return 4;
-      if(bsl>=331&&bsl<=350) return 5;
-      if(bsl<231) return 0; return 5;
+      const x = Number(bsl);
+      if (!Number.isFinite(x)) return 0;
+      if (x>=231 && x<=250) return 1;
+      if (x>=251 && x<=270) return 2;
+      if (x>=271 && x<=290) return 3;
+      if (x>=291 && x<=310) return 4;
+      if (x>=311 && x<=330) return 5;
+      if (x>=331 && x<=350) return 6;
+      if (x<231) return 0;
+      return 7;
     }
-    function codeFromWeightLbs(w){ for(const r of CODE_BY_WEIGHT) if(w<=r.max) return r.code; return 0; }
-    function codeFromHeightCm(cm){ for(const r of CODE_BY_HEIGHT_CM) if(cm<=r.max) return r.code; return 0; }
-    function clamp(n,lo,hi){ return Math.max(lo,Math.min(hi,n)); }
-    function roundToHalf(x){ if(!Number.isFinite(x)) return ""; return (Math.round(x*2)/2).toFixed(1); }
 
-    function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis="weight", ageAdj="auto" }){
-      const h_cm = height_in ? (Number(height_in)*2.54) : NaN;
-      const w_lb = Number(weight_lb);
-      if(!Number.isFinite(w_lb)) return { din:"", code:"", band:"", explain:"Missing weight" };
-      const codeW = codeFromWeightLbs(w_lb);
-      const codeH = Number.isFinite(h_cm) ? codeFromHeightCm(h_cm) : codeW;
-      let baseCode = (basis==="weight") ? codeW : (basis==="height" ? codeH : Math.min(codeW,codeH));
-      let code = baseCode;
-      if(ageAdj==="auto"){ if(Number.isFinite(age_years)&&(age_years<=10||age_years>=50)) code-=1; }
-      else if(ageAdj==="minus1"){ code-=1; }
-      if(skierType==="I") code-=1;
-      if(skierType==="III") code+=1;
-      code = clamp(code, 0, DIN_TABLE.length-1);
+    // ==== Helpers (lookup + rounding for nudges) ====
+    function codeFromWeightLbs(w){
+      for (const r of CODE_BY_WEIGHT) if (w <= r.max) return r.code;
+      return 0;
+    }
+    function codeFromHeightCm(cm){
+      for (const r of CODE_BY_HEIGHT_CM) if (cm <= r.max) return r.code;
+      return 0;
+    }
+    function roundToHalf(x){
+      if (!Number.isFinite(x)) return "";
+      return (Math.round(x * 2) / 2).toFixed(1);
+    }
+
+    // Height conversion (ft + in -> cm)
+    function heightFeetInchesToCm(height_ft, height_in = 0) {
+      const ft = Number(height_ft);
+      const inch = Number(height_in);
+      if (!Number.isFinite(ft) && !Number.isFinite(inch)) return NaN;
+      const f = Number.isFinite(ft) ? ft : 0;
+      const i = Number.isFinite(inch) ? inch : 0;
+      return (f * 12 + i) * 2.54;
+    }
+
+    // Base code from weight/height, then age/type adjustments; clamp 0..15
+    function baseCodeFromWeightHeightAgeType(weight_lb, height_ft, height_in, age_years, skierType) {
+      const codeW = codeFromWeightLbs(Number(weight_lb));
+      const h_cm  = heightFeetInchesToCm(height_ft, height_in);
+      const codeH = codeFromHeightCm(h_cm);
+
+      let baseCode = Math.min(codeW, codeH); // conservative
+
+      // Age (≤9 or ≥50 → −1)
+      if (Number.isFinite(age_years) && (age_years <= 9 || age_years >= 50)) {
+        baseCode -= 1;
+      }
+
+      // Skier type (I +0, II +1, III +2)
+      const type = (skierType || "").toString().toUpperCase();
+      if (type === "II") baseCode += 1;
+      else if (type === "III") baseCode += 2;
+
+      return Math.max(0, Math.min(15, baseCode));
+    }
+
+    function skierCodeLetter(baseCode) {
+      return String.fromCharCode(65 + baseCode);
+    }
+
+    function computeFinalDIN(baseCode, bsl_mm) {
       const band = bslBandIndex(Number(bsl_mm));
-      const rawDIN = DIN_TABLE[code][band];
-      const din = roundToHalf(rawDIN);
-      const codeLetter = String.fromCharCode(65+code);
-      const bands=["231–250","251–270","271–290","291–310","311–330","331–350"];
-      const explain = `Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseCode)}), age adj: ${ageAdj}, type: ${skierType||"II"}, BSL band ${bands[band]}.`;
-      return { din, code: codeLetter, band: bands[band], explain };
+      return DIN_TABLE[baseCode][band]; // may be null
     }
 
+    // 8-column band labels
+    const BSL_BANDS = ["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
+
+    // Wrapper that returns { din, code, band, explain } for the UI
+    function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis = "auto", ageAdj = "auto" }) {
+      const w = Number(weight_lb);
+      if (!Number.isFinite(w)) return { din:"", code:"", band:"", explain:"Missing weight" };
+
+      // Intake height is total inches → split to ft/in
+      const totalIn = Number(height_in);
+      const ft = Number.isFinite(totalIn) ? Math.floor(totalIn / 12) : 0;
+      const inch = Number.isFinite(totalIn) ? (totalIn - ft * 12) : 0;
+
+      // Weight/height codes for explanation
+      const codeW = codeFromWeightLbs(w);
+      const h_cm = Number.isFinite(totalIn) ? totalIn * 2.54 : NaN;
+      const codeH = Number.isFinite(h_cm) ? codeFromHeightCm(h_cm) : codeW;
+
+      // Basis pick (weight | height | auto = lower)
+      const baseBeforeAdj =
+        basis === "weight" ? codeW :
+        basis === "height" ? codeH :
+        Math.min(codeW, codeH);
+
+      // Start with consolidated function (auto age rule baked in)
+      let baseCode = baseCodeFromWeightHeightAgeType(w, ft, inch, age_years, skierType);
+
+      // If basis is forced, recompute starting from baseBeforeAdj and apply chosen ageAdj
+      if (basis !== "auto") {
+        let code = baseBeforeAdj;
+
+        // Age adjustment according to ageAdj selection
+        if (ageAdj === "auto") {
+          if (Number.isFinite(age_years) && (age_years <= 9 || age_years >= 50)) code -= 1;
+        } else if (ageAdj === "minus1") {
+          code -= 1;
+        } // "none" → no change
+
+        // Skier type (I +0, II +1, III +2)
+        const type = (skierType || "").toString().toUpperCase();
+        if (type === "II") code += 1;
+        else if (type === "III") code += 2;
+
+        baseCode = Math.max(0, Math.min(15, code));
+      } else {
+        // basis === "auto" → overlay manual ageAdj (so UI control still works)
+        if (ageAdj === "minus1") {
+          baseCode = Math.max(0, baseCode - 1);
+        } else if (
+          ageAdj === "none" &&
+          Number.isFinite(age_years) &&
+          (age_years <= 9 || age_years >= 50)
+        ) {
+          // undo the auto -1 that baseCodeFrom... would have applied
+          baseCode = Math.min(15, baseCode + 1);
+        }
+      }
+
+      // Final DIN (no rounding)
+      const bandIdx = bslBandIndex(Number(bsl_mm));
+      const din = computeFinalDIN(baseCode, bsl_mm);
+
+      const codeLetter = skierCodeLetter(baseCode);
+      const explain =
+        `Base code (W:${skierCodeLetter(codeW)} / H:${skierCodeLetter(codeH)} → ${skierCodeLetter(baseBeforeAdj)}), ` +
+        `age adj: ${ageAdj}, type: ${(skierType || "II").toUpperCase()}, BSL band ${BSL_BANDS[bandIdx]}.`;
+
+      return { din, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
+    }
+
+    // ===== UI wiring =====
     const tb = document.getElementById("tbody");
     const dinModal = document.getElementById("dinModal");
-    const dinClose = document.getElementById("dinClose"); // declared ONCE
+    const dinClose = document.getElementById("dinClose");
     const outDin = () => document.getElementById("out_din");
     const outSum = () => document.getElementById("out_summary");
     const outLT = () => document.getElementById("out_left_toe");
@@ -309,7 +413,11 @@
     let currentRow = null;
 
     function renderWithNudges(baseDin){
-      function add(n){ if(!baseDin) return "—"; const v = (parseFloat(baseDin)||0) + n; return roundToHalf(v); }
+      function add(n){
+        if(!baseDin) return "—";
+        const v = (parseFloat(baseDin)||0) + n;
+        return roundToHalf(v);
+      }
       outLT().textContent = add(nudges.lt);
       outLH().textContent = add(nudges.lh);
       outRT().textContent = add(nudges.rt);
@@ -346,16 +454,17 @@
       if (!currentRow) return;
       const res = computeDIN({
         weight_lb: currentRow.weight_lb,
-        height_in: currentRow.height_in,
+        height_in: currentRow.height_in, // total inches from intake
         age_years: currentRow.age,
         skierType: inpType().value,
         bsl_mm: Number(inpBSL().value),
         basis: inpBasis().value,
         ageAdj: inpAgeAdj().value
       });
-      outDin().textContent = res.din || "—";
+      const baseDin = (res.din == null ? "—" : String(res.din));
+      outDin().textContent = baseDin;
       outSum().textContent = res.din ? `Skier code ${res.code}, ${res.explain}` : "";
-      renderWithNudges(res.din || "");
+      renderWithNudges(baseDin);
     }
 
     async function fetchLatestLiabilityWrapper(lsid, email){
@@ -373,7 +482,7 @@
         waiver_id: row.waiver_id || "",
         age: Number(intake.age) || NaN,
         weight_lb: Number(intake.weight_lb) || NaN,
-        height_in: Number(intake.height_in) || NaN,
+        height_in: Number(intake.height_in) || NaN, // total inches from intake
         skier_type: (intake.skier_type || "").toUpperCase()
       };
       document.getElementById("i_name").textContent = [currentRow.first_name, currentRow.last_name].filter(Boolean).join(" ") || "—";
@@ -387,7 +496,7 @@
       inpBSL().value = "";
       inpType().value = (currentRow.skier_type==="I"||currentRow.skier_type==="II"||currentRow.skier_type==="III") ? currentRow.skier_type : "II";
       inpAgeAdj().value = "auto";
-      inpBasis().value = "weight";
+      inpBasis().value = "auto"; // default to auto (more conservative)
       bslHint().textContent = "";
 
       if (prior && prior.bsl_mm) {
@@ -465,7 +574,7 @@
                 class="btn"
                 data-action="liab"
                 data-email="${r.email || ""}"
-                data-lsid="${r.lightspeed_id || ""}"  <!-- FIXED -->
+                data-lsid="${r.lightspeed_id || ""}"
                 data-first="${r.first_name || ""}"
                 data-last="${r.last_name || ""}"
               >Open Liability</button>
