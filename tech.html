@@ -256,17 +256,17 @@
     ];
 
     // Safer BSL band index (handles NaN)
-    function bslBandIndex(bsl){
+   function bslBandIndex(bsl) {
       const x = Number(bsl);
       if (!Number.isFinite(x)) return 0;
-      if (x>=231 && x<=250) return 1;
-      if (x>=251 && x<=270) return 2;
-      if (x>=271 && x<=290) return 3;
-      if (x>=291 && x<=310) return 4;
-      if (x>=311 && x<=330) return 5;
-      if (x>=331 && x<=350) return 6;
-      if (x<231) return 0;
-      return 7;
+      if (x < 231) return 0;              // "<231"
+      if (x <= 250) return 1;             // "231–250"
+      if (x <= 270) return 2;             // "251–270"
+      if (x <= 290) return 3;             // "271–290"
+      if (x <= 310) return 4;             // "291–310"
+      if (x <= 330) return 5;             // "311–330"  ← BSL 315 maps HERE
+      if (x <= 350) return 6;             // "331–350"
+      return 7;                           // ">350"
     }
 
     // ==== Helpers (lookup + rounding for nudges) ====
@@ -496,7 +496,7 @@
       inpBSL().value = "";
       inpType().value = (currentRow.skier_type==="I"||currentRow.skier_type==="II"||currentRow.skier_type==="III") ? currentRow.skier_type : "II";
       inpAgeAdj().value = "auto";
-      inpBasis().value = "auto"; // default to auto (more conservative)
+      inpBasis().value = "weight"; // match shop flow & chart
       bslHint().textContent = "";
 
       if (prior && prior.bsl_mm) {
