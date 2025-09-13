@@ -46,7 +46,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.4-nonudge-2dp</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.5-sse-nonudge-2dp</div>
     </div>
   </main>
 
@@ -166,7 +166,7 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 10000; // 10s with visibility pause (kept from prior)
+    const REFRESH_MS = 10000; // 10s poll, paused when hidden
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2500); }
     function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
@@ -221,7 +221,7 @@
       if (x <= 270) return 2;
       if (x <= 290) return 3;
       if (x <= 310) return 4;
-      if (x <= 330) return 5; // BSL 315 → here
+      if (x <= 330) return 5; // 315 → here
       if (x <= 350) return 6;
       return 7;
     }
@@ -230,7 +230,7 @@
 
     const BSL_BANDS = ["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
 
-    // Compute DIN (NO rounding; show as two-decimal string)
+    // Compute DIN (no rounding; display with .toFixed(2))
     function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis = "auto", ageAdj = "auto" }) {
       const w = Number(weight_lb);
       if (!Number.isFinite(w)) return { din:null, code:"", band:"", explain:"Missing weight" };
@@ -308,12 +308,6 @@
       });
       reflectBaseDin(res.din);
       outSum().textContent = (res.din == null) ? "" : `Skier code ${res.code}, ${res.explain}`;
-    }
-
-    async function fetchLatestLiabilityWrapper(lsid, email){
-      const tag = lsid ? `ls_${lsid}` : "";
-      try { return await fetchLatestLiability({ tag, email }); }
-      catch { return {}; }
     }
 
     function openDINModal(intake, row, prior) {
@@ -476,13 +470,121 @@
 
     document.getElementById("refreshBtn").addEventListener("click", refresh);
 
-    // Pause auto-refresh when hidden
+    // ----- Faster auto-refresh with visibility pause/resume -----
     let refreshTimer = null;
-    function startAutoRefresh(){ if (refreshTimer) clearInterval(refreshTimer); refreshTimer = setInterval(refresh, REFRESH_MS); }
+    function startAutoRefresh(){
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(refresh, REFRESH_MS);
+    }
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) { if (refreshTimer) clearInterval(refreshTimer); }
-      else { refresh(); startAutoRefresh(); }
+      if (document.hidden) {
+        if (refreshTimer) clearInterval(refreshTimer);
+      } else {
+        refresh();
+        startAutoRefresh();
+      }
     });
+
+    // ===== SSE (push) wiring: insert rows immediately on webhook events =====
+    const seenWaivers = new Set(); // prevent dupes if poll & push overlap
+
+    function bindRowButtons(tr){
+      tr.querySelectorAll("button").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const action = btn.getAttribute("data-action");
+          const email  = btn.getAttribute("data-email");
+          const lsid   = btn.getAttribute("data-lsid");
+          const first  = btn.getAttribute("data-first");
+          const last   = btn.getAttribute("data-last");
+          const intakeWaiverId = btn.getAttribute("data-intake");
+
+          if (action === "liab") {
+            const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
+            window.open(url, "_blank", "noopener");
+            return;
+          }
+          if (action === "din") {
+            if (!intakeWaiverId) { showToast("No intake ID on row."); return; }
+            try {
+              const details = await fetchIntakeDetails(intakeWaiverId);
+              details.waiver_id = intakeWaiverId;
+              const tag = lsid ? `ls_${lsid}` : "";
+              const prior = await fetchLatestLiability({ tag, email });
+              openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId }, prior);
+            } catch (e) {
+              console.error("intake-details/prior-liability failed:", e);
+              showToast("Could not load intake or prior liability.");
+            }
+          }
+        });
+      });
+    }
+
+    function upsertRowFromWebhook(evt) {
+      const r = evt?.data; if (!r) return;
+      if (r.waiver_id && seenWaivers.has(r.waiver_id)) return;
+      if (r.waiver_id) seenWaivers.add(r.waiver_id);
+
+      const row = {
+        signed_on: r.signed_on,
+        email: r.email,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        lightspeed_id: r.lightspeed_id,
+        intake_pdf_url: r.intake_pdf_url,
+        waiver_id: r.waiver_id,
+      };
+
+      const tb = document.getElementById("tbody");
+      const tr = document.createElement("tr");
+      tr.className = "border-b";
+      const pdfCell = row.intake_pdf_url
+        ? `<a class="link" href="${row.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>` : "—";
+      tr.innerHTML = `
+        <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(row.signed_on)}</td>
+        <td class="py-2 pr-4">${row.email || "—"}</td>
+        <td class="py-2 pr-4">${row.first_name || "—"}</td>
+        <td class="py-2 pr-4">${row.last_name || "—"}</td>
+        <td class="py-2 pr-4">${row.lightspeed_id || "—"}</td>
+        <td class="py-2 pr-4">${pdfCell}</td>
+        <td class="py-2 pr-4">
+          <div class="flex items-center gap-2">
+            <button
+              class="btn-outline"
+              data-action="din"
+              data-email="${row.email || ""}"
+              data-lsid="${row.lightspeed_id || ""}"
+              data-first="${row.first_name || ""}"
+              data-last="${row.last_name || ""}"
+              data-intake="${row.waiver_id || ""}"
+            >Compute DIN</button>
+            <button
+              class="btn"
+              data-action="liab"
+              data-email="${row.email || ""}"
+              data-lsid="${row.lightspeed_id || ""}"
+              data-first="${row.first_name || ""}"
+              data-last="${row.last_name || ""}"
+            >Open Liability</button>
+          </div>
+        </td>
+      `;
+      tb.prepend(tr);
+      bindRowButtons(tr);
+    }
+
+    function startSSE(){
+      try {
+        const es = new EventSource("/api/stream");
+        es.addEventListener("intake", (ev) => {
+          try { upsertRowFromWebhook(JSON.parse(ev.data)); } catch {}
+        });
+        es.addEventListener("ping", () => {});
+        es.onerror = () => { /* browser auto-reconnects */ };
+      } catch (e) {
+        console.warn("SSE unavailable", e);
+      }
+    }
 
     (async () => {
       try {
@@ -494,7 +596,15 @@
         showToast("Failed to load config");
       }
       await refresh();
+      startSSE();       // <— real-time push
+      // Auto-refresh loop (fallback/consistency)
+      let refreshTimer = null;
+      function startAutoRefresh(){ if (refreshTimer) clearInterval(refreshTimer); refreshTimer = setInterval(refresh, REFRESH_MS); }
       startAutoRefresh();
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { if (refreshTimer) clearInterval(refreshTimer); }
+        else { refresh(); startAutoRefresh(); }
+      });
     })();
   </script>
 </body>
