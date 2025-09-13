@@ -15,6 +15,10 @@
     .input { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; }
     .select { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; }
     .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; }
+    .badge { @apply inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium; }
+    .badge-green { @apply bg-green-50 text-green-700 border border-green-200; }
+    .badge-amber { @apply bg-amber-50 text-amber-700 border border-amber-200; }
+    .badge-gray  { @apply bg-gray-50 text-gray-600 border border-gray-200; }
   </style>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
@@ -39,6 +43,7 @@
               <th class="py-2 pr-4">Last</th>
               <th class="py-2 pr-4">LS ID</th>
               <th class="py-2 pr-4">Intake PDF</th>
+              <th class="py-2 pr-4">Status</th>
               <th class="py-2 pr-4">Actions</th>
             </tr>
           </thead>
@@ -46,7 +51,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.5-sse-nonudge-2dp</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.6-sse-merge</div>
     </div>
   </main>
 
@@ -166,7 +171,9 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 10000; // 10s poll, paused when hidden
+    const REFRESH_MS = 10000;          // poll every 10s (fallback)
+    const SSE_GRACE_MS = 3 * 60 * 1000; // keep SSE-only rows for 3 minutes
+    const CLEANUP_MS = 60 * 1000;       // run cleanup every 60s
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2500); }
     function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
@@ -183,7 +190,7 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // ===== DIN tables / lookups =====
+    // ===== DIN tables / lookups (unchanged) =====
     const CODE_BY_WEIGHT = [
       { max:  29, code: 0 }, { max:  38, code: 1 }, { max:  47, code: 2 }, { max:  56, code: 3 },
       { max:  66, code: 4 }, { max:  78, code: 5 }, { max:  91, code: 6 }, { max: 107, code: 7 },
@@ -221,7 +228,7 @@
       if (x <= 270) return 2;
       if (x <= 290) return 3;
       if (x <= 310) return 4;
-      if (x <= 330) return 5; // 315 → here
+      if (x <= 330) return 5;
       if (x <= 350) return 6;
       return 7;
     }
@@ -230,7 +237,6 @@
 
     const BSL_BANDS = ["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
 
-    // Compute DIN (no rounding; display with .toFixed(2))
     function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis = "auto", ageAdj = "auto" }) {
       const w = Number(weight_lb);
       if (!Number.isFinite(w)) return { din:null, code:"", band:"", explain:"Missing weight" };
@@ -261,7 +267,7 @@
 
       const baseCode = Math.max(0, Math.min(15, code));
       const bandIdx = bslBandIndex(Number(bsl_mm));
-      const dinRaw = DIN_TABLE[baseCode][bandIdx]; // keep as-is
+      const dinRaw = DIN_TABLE[baseCode][bandIdx];
 
       const codeLetter = String.fromCharCode(65 + baseCode);
       const explain = `Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type||"II"}, BSL band ${BSL_BANDS[bandIdx]}.`;
@@ -269,7 +275,145 @@
       return { din: dinRaw, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
     }
 
+    // ===== Client-side store & rendering =====
+    const store = new Map(); // key: waiver_id (or fallback)
     const tb = document.getElementById("tbody");
+
+    function rowKey(r){
+      return r.waiver_id || `${r.email || "?"}#${r.signed_on || "?"}`;
+    }
+
+    function upsertToStore(r, meta = {}){
+      const key = rowKey(r);
+      const prev = store.get(key) || {};
+      const merged = {
+        ...prev,
+        ...r,
+        _meta: {
+          source: meta.source || prev._meta?.source || "poll",
+          createdAt: prev._meta?.createdAt || Date.now(),
+          lastSeenInPoll: meta.seenInPoll ? Date.now() : (prev._meta?.lastSeenInPoll || null),
+        }
+      };
+      store.set(key, merged);
+    }
+
+    function reconcileFromPoll(rows){
+      const seen = new Set();
+      for (const r of rows){
+        upsertToStore(r, { source: "poll", seenInPoll: true });
+        seen.add(rowKey(r));
+      }
+      // Do NOT delete anything here; cleanup handles expiry of SSE-only rows
+    }
+
+    function cleanupStore(){
+      const now = Date.now();
+      for (const [key, r] of store.entries()){
+        // Drop anything older than 24h outright
+        const signed = new Date(r.signed_on || r._meta?.createdAt || now).getTime();
+        if (now - signed > 24*60*60*1000) { store.delete(key); continue; }
+
+        // If the row only ever came from SSE and hasn't shown up in a poll within grace, drop it
+        const src = r._meta?.source || "poll";
+        const seenPoll = r._meta?.lastSeenInPoll || null;
+        const createdAt = r._meta?.createdAt || now;
+        if (src === "sse" && !seenPoll && (now - createdAt) > SSE_GRACE_MS){
+          store.delete(key);
+        }
+      }
+    }
+
+    function renderTable(){
+      // Render from STORE, newest first
+      const rows = Array.from(store.values()).sort((a,b) => {
+        const ta = new Date(a.signed_on || a._meta?.createdAt || 0).getTime();
+        const tb = new Date(b.signed_on || b._meta?.createdAt || 0).getTime();
+        return tb - ta;
+      });
+      tb.innerHTML = "";
+      for (const r of rows){
+        const tr = document.createElement("tr");
+        tr.className = "border-b";
+        const pdfCell = r.intake_pdf_url
+          ? `<a class="link" href="${r.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>` : "—";
+
+        const statusBadge =
+          r._meta?.lastSeenInPoll
+            ? `<span class="badge badge-green">synced</span>`
+            : (r._meta?.source === "sse"
+                ? `<span class="badge badge-amber">pending</span>`
+                : `<span class="badge badge-gray">unknown</span>`);
+
+        tr.innerHTML = `
+          <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on || r._meta?.createdAt)}</td>
+          <td class="py-2 pr-4">${r.email || "—"}</td>
+          <td class="py-2 pr-4">${r.first_name || "—"}</td>
+          <td class="py-2 pr-4">${r.last_name || "—"}</td>
+          <td class="py-2 pr-4">${r.lightspeed_id || "—"}</td>
+          <td class="py-2 pr-4">${pdfCell}</td>
+          <td class="py-2 pr-4">${statusBadge}</td>
+          <td class="py-2 pr-4">
+            <div class="flex items-center gap-2">
+              <button
+                class="btn-outline"
+                data-action="din"
+                data-email="${r.email || ""}"
+                data-lsid="${r.lightspeed_id || ""}"
+                data-first="${r.first_name || ""}"
+                data-last="${r.last_name || ""}"
+                data-intake="${r.waiver_id || ""}"
+              >Compute DIN</button>
+              <button
+                class="btn"
+                data-action="liab"
+                data-email="${r.email || ""}"
+                data-lsid="${r.lightspeed_id || ""}"
+                data-first="${r.first_name || ""}"
+                data-last="${r.last_name || ""}"
+              >Open Liability</button>
+            </div>
+          </td>
+        `;
+        tb.appendChild(tr);
+
+        // Bind row buttons
+        tr.querySelectorAll("button").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const action = btn.getAttribute("data-action");
+            const email  = btn.getAttribute("data-email");
+            const lsid   = btn.getAttribute("data-lsid");
+            const first  = btn.getAttribute("data-first");
+            const last   = btn.getAttribute("data-last");
+            const intakeWaiverId = btn.getAttribute("data-intake");
+
+            if (action === "liab") {
+              const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
+              window.open(url, "_blank", "noopener");
+              return;
+            }
+            if (action === "din") {
+              if (!intakeWaiverId) { showToast("No intake ID on row."); return; }
+              try {
+                const details = await fetchIntakeDetails(intakeWaiverId);
+                details.waiver_id = intakeWaiverId;
+                const tag = lsid ? `ls_${lsid}` : "";
+                const prior = await fetchLatestLiability({ tag, email });
+                openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId }, prior);
+              } catch (e) {
+                console.error("intake-details/prior-liability failed:", e);
+                showToast("Could not load intake or prior liability.");
+              }
+            }
+          });
+        });
+      }
+      document.getElementById("foot").textContent =
+        `Rows: ${rows.length}. ` +
+        `SSE grace ${Math.round(SSE_GRACE_MS/1000)}s · Poll ${Math.round(REFRESH_MS/1000)}s.`;
+    }
+
+    // ===== DIN modal (unchanged core) =====
     const dinModal = document.getElementById("dinModal");
     const dinClose = document.getElementById("dinClose");
     const outDin = () => document.getElementById("out_din");
@@ -380,95 +524,26 @@
       currentRow = null;
     });
 
-    function renderRows(rows) {
-      const tb = document.getElementById("tbody");
-      tb.innerHTML = "";
-      for (const r of rows) {
-        const tr = document.createElement("tr");
-        tr.className = "border-b";
-        const pdfCell = r.intake_pdf_url
-          ? `<a class="link" href="${r.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>`
-          : "—";
-        tr.innerHTML = `
-          <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td>
-          <td class="py-2 pr-4">${r.email || "—"}</td>
-          <td class="py-2 pr-4">${r.first_name || "—"}</td>
-          <td class="py-2 pr-4">${r.last_name || "—"}</td>
-          <td class="py-2 pr-4">${r.lightspeed_id || "—"}</td>
-          <td class="py-2 pr-4">${pdfCell}</td>
-          <td class="py-2 pr-4">
-            <div class="flex items-center gap-2">
-              <button
-                class="btn-outline"
-                data-action="din"
-                data-email="${r.email || ""}"
-                data-lsid="${r.lightspeed_id || ""}"
-                data-first="${r.first_name || ""}"
-                data-last="${r.last_name || ""}"
-                data-intake="${r.waiver_id || ""}"
-              >Compute DIN</button>
-              <button
-                class="btn"
-                data-action="liab"
-                data-email="${r.email || ""}"
-                data-lsid="${r.lightspeed_id || ""}"
-                data-first="${r.first_name || ""}"
-                data-last="${r.last_name || ""}"
-              >Open Liability</button>
-            </div>
-          </td>
-        `;
-        tb.appendChild(tr);
-      }
-
-      tb.querySelectorAll("button").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const action = btn.getAttribute("data-action");
-          const email  = btn.getAttribute("data-email");
-          const lsid   = btn.getAttribute("data-lsid");
-          const first  = btn.getAttribute("data-first");
-          const last   = btn.getAttribute("data-last");
-          const intakeWaiverId = btn.getAttribute("data-intake");
-
-          if (action === "liab") {
-            const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
-            window.open(url, "_blank", "noopener");
-            return;
-          }
-
-          if (action === "din") {
-            if (!intakeWaiverId) { showToast("No intake ID on row."); return; }
-            try {
-              const details = await fetchIntakeDetails(intakeWaiverId);
-              details.waiver_id = intakeWaiverId;
-
-              const tag = lsid ? `ls_${lsid}` : "";
-              const prior = await fetchLatestLiability({ tag, email });
-
-              openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId }, prior);
-            } catch (e) {
-              console.error("intake-details/prior-liability failed:", e);
-              showToast("Could not load intake or prior liability.");
-            }
-          }
-        });
-      });
-    }
-
+    // ===== Data fetching / merging =====
     async function refresh() {
       try {
         const r = await fetch("/api/today-intakes");
         const data = await r.json();
-        renderRows(data.rows || []);
-        document.getElementById("foot").textContent =
-          `Window: ${data.from || "?"} → ${data.to || "?"}. Auto-refresh every ${Math.floor(REFRESH_MS/1000)}s (pauses when tab hidden).`;
+        reconcileFromPoll(data.rows || []);
+        cleanupStore();
+        renderTable();
       } catch (e) {
         console.error(e);
         showToast("Failed to refresh list");
       }
     }
 
-    document.getElementById("refreshBtn").addEventListener("click", refresh);
+    document.getElementById("refreshBtn").addEventListener("click", () => {
+      refresh();
+    });
+
+    // Periodic cleanup
+    setInterval(() => { cleanupStore(); renderTable(); }, CLEANUP_MS);
 
     // ----- Faster auto-refresh with visibility pause/resume -----
     let refreshTimer = null;
@@ -486,91 +561,20 @@
     });
 
     // ===== SSE (push) wiring: insert rows immediately on webhook events =====
-    const seenWaivers = new Set(); // prevent dupes if poll & push overlap
-
-    function bindRowButtons(tr){
-      tr.querySelectorAll("button").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const action = btn.getAttribute("data-action");
-          const email  = btn.getAttribute("data-email");
-          const lsid   = btn.getAttribute("data-lsid");
-          const first  = btn.getAttribute("data-first");
-          const last   = btn.getAttribute("data-last");
-          const intakeWaiverId = btn.getAttribute("data-intake");
-
-          if (action === "liab") {
-            const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
-            window.open(url, "_blank", "noopener");
-            return;
-          }
-          if (action === "din") {
-            if (!intakeWaiverId) { showToast("No intake ID on row."); return; }
-            try {
-              const details = await fetchIntakeDetails(intakeWaiverId);
-              details.waiver_id = intakeWaiverId;
-              const tag = lsid ? `ls_${lsid}` : "";
-              const prior = await fetchLatestLiability({ tag, email });
-              openDINModal(details, { email, lightspeed_id: lsid, first_name: first, last_name: last, waiver_id: intakeWaiverId }, prior);
-            } catch (e) {
-              console.error("intake-details/prior-liability failed:", e);
-              showToast("Could not load intake or prior liability.");
-            }
-          }
-        });
-      });
-    }
-
     function upsertRowFromWebhook(evt) {
       const r = evt?.data; if (!r) return;
-      if (r.waiver_id && seenWaivers.has(r.waiver_id)) return;
-      if (r.waiver_id) seenWaivers.add(r.waiver_id);
-
-      const row = {
+      const normalized = {
+        waiver_id: r.waiver_id,
+        template_id: r.template_id,
         signed_on: r.signed_on,
         email: r.email,
         first_name: r.first_name,
         last_name: r.last_name,
         lightspeed_id: r.lightspeed_id,
-        intake_pdf_url: r.intake_pdf_url,
-        waiver_id: r.waiver_id,
+        intake_pdf_url: r.intake_pdf_url
       };
-
-      const tb = document.getElementById("tbody");
-      const tr = document.createElement("tr");
-      tr.className = "border-b";
-      const pdfCell = row.intake_pdf_url
-        ? `<a class="link" href="${row.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>` : "—";
-      tr.innerHTML = `
-        <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(row.signed_on)}</td>
-        <td class="py-2 pr-4">${row.email || "—"}</td>
-        <td class="py-2 pr-4">${row.first_name || "—"}</td>
-        <td class="py-2 pr-4">${row.last_name || "—"}</td>
-        <td class="py-2 pr-4">${row.lightspeed_id || "—"}</td>
-        <td class="py-2 pr-4">${pdfCell}</td>
-        <td class="py-2 pr-4">
-          <div class="flex items-center gap-2">
-            <button
-              class="btn-outline"
-              data-action="din"
-              data-email="${row.email || ""}"
-              data-lsid="${row.lightspeed_id || ""}"
-              data-first="${row.first_name || ""}"
-              data-last="${row.last_name || ""}"
-              data-intake="${row.waiver_id || ""}"
-            >Compute DIN</button>
-            <button
-              class="btn"
-              data-action="liab"
-              data-email="${row.email || ""}"
-              data-lsid="${row.lightspeed_id || ""}"
-              data-first="${row.first_name || ""}"
-              data-last="${row.last_name || ""}"
-            >Open Liability</button>
-          </div>
-        </td>
-      `;
-      tb.prepend(tr);
-      bindRowButtons(tr);
+      upsertToStore(normalized, { source: "sse" });
+      renderTable(); // show instantly
     }
 
     function startSSE(){
@@ -595,16 +599,9 @@
         console.error("config fetch failed:", e);
         showToast("Failed to load config");
       }
-      await refresh();
-      startSSE();       // <— real-time push
-      // Auto-refresh loop (fallback/consistency)
-      let refreshTimer = null;
-      function startAutoRefresh(){ if (refreshTimer) clearInterval(refreshTimer); refreshTimer = setInterval(refresh, REFRESH_MS); }
-      startAutoRefresh();
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden) { if (refreshTimer) clearInterval(refreshTimer); }
-        else { refresh(); startAutoRefresh(); }
-      });
+      await refresh();    // seed store from poll
+      startSSE();         // then listen for instant adds
+      startAutoRefresh(); // keep poll as safety net
     })();
   </script>
 </body>
