@@ -12,8 +12,16 @@
     .btn-outline { @apply rounded-xl border border-gray-300 px-3 py-2 text-sm font-semibold hover:bg-gray-50; }
     .link { @apply text-blue-600 hover:underline; }
     .kbd { @apply inline-block rounded-md border border-gray-300 px-1.5 py-0.5 text-xs bg-gray-50; }
-    .input { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; }
-    .select { @apply w-full rounded-xl border border-gray-300 p-2.5 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; }
+    /* Shaded inputs & selects */
+    .input {
+      @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50
+             focus:outline-none focus:ring-2 focus:ring-black focus:border-black transition;
+    }
+    .select {
+      @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50
+             focus:outline-none focus:ring-2 focus:ring-black focus:border-black transition;
+      appearance: none;
+    }
     .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; }
     .badge { @apply inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium; }
     .badge-green { @apply bg-green-50 text-green-700 border border-green-200; }
@@ -51,7 +59,7 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.6-sse-merge</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-din-preliab-v6.7-sse-merge-pdfproxy</div>
     </div>
   </main>
 
@@ -82,17 +90,17 @@
         </div>
 
         <!-- Right: Inputs & Result -->
-        <div class="border rounded-xl p-4">
+        <div class="border rounded-2xl p-4 bg-gray-50">
           <h4 class="font-semibold mb-2">Tech Inputs</h4>
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs text-gray-600 mb-1">Boot Sole Length (mm)</label>
-              <input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 271">
+              <label class="block text-xs text-gray-700 mb-1">Boot Sole Length (mm)</label>
+              <input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 315">
               <p id="bsl_hint" class="text-[11px] text-gray-500 mt-1"></p>
             </div>
             <div>
-              <label class="block text-xs text-gray-600 mb-1">Skier Type</label>
+              <label class="block text-xs text-gray-700 mb-1">Skier Type</label>
               <select id="inp_type" class="select">
                 <option value="I">Type I (conservative)</option>
                 <option value="II" selected>Type II (average)</option>
@@ -101,7 +109,7 @@
               <p class="text-[11px] text-gray-500 mt-1">Prefilled from Intake when available.</p>
             </div>
             <div>
-              <label class="block text-xs text-gray-600 mb-1">Age Adjustment</label>
+              <label class="block text-xs text-gray-700 mb-1">Age Adjustment</label>
               <select id="inp_ageAdj" class="select">
                 <option value="auto" selected>Auto (use intake age)</option>
                 <option value="none">No adjustment</option>
@@ -109,7 +117,7 @@
               </select>
             </div>
             <div>
-              <label class="block text-xs text-gray-600 mb-1">Basis (Weight vs Height)</label>
+              <label class="block text-xs text-gray-700 mb-1">Basis (Weight vs Height)</label>
               <select id="inp_basis" class="select">
                 <option value="weight" selected>Weight (recommended)</option>
                 <option value="height">Height</option>
@@ -119,7 +127,7 @@
           </div>
 
           <!-- Base DIN -->
-          <div class="mt-4 border rounded-lg p-3 bg-gray-50">
+          <div class="mt-4 border rounded-lg p-3 bg-white">
             <div class="text-sm text-gray-600">Base Result</div>
             <div class="mt-1 flex items-baseline gap-3">
               <div class="text-2xl font-bold" id="out_din">—</div>
@@ -129,7 +137,7 @@
 
             <!-- Per-foot outputs (mirrors base result; no nudges) -->
             <div class="mt-4 grid grid-cols-2 gap-3">
-              <div class="border rounded-lg p-3 bg-white">
+              <div class="border rounded-lg p-3 bg-gray-50">
                 <div class="text-sm font-semibold mb-2">Left Binding</div>
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-xs text-gray-600">Toe</span>
@@ -140,7 +148,7 @@
                   <span id="out_left_heel" class="pill w-20 text-center">—</span>
                 </div>
               </div>
-              <div class="border rounded-lg p-3 bg-white">
+              <div class="border rounded-lg p-3 bg-gray-50">
                 <div class="text-sm font-semibold mb-2">Right Binding</div>
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-xs text-gray-600">Toe</span>
@@ -190,7 +198,7 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // ===== DIN tables / lookups (unchanged) =====
+    // ===== DIN lookup tables =====
     const CODE_BY_WEIGHT = [
       { max:  29, code: 0 }, { max:  38, code: 1 }, { max:  47, code: 2 }, { max:  56, code: 3 },
       { max:  66, code: 4 }, { max:  78, code: 5 }, { max:  91, code: 6 }, { max: 107, code: 7 },
@@ -299,22 +307,16 @@
     }
 
     function reconcileFromPoll(rows){
-      const seen = new Set();
       for (const r of rows){
         upsertToStore(r, { source: "poll", seenInPoll: true });
-        seen.add(rowKey(r));
       }
-      // Do NOT delete anything here; cleanup handles expiry of SSE-only rows
     }
 
     function cleanupStore(){
       const now = Date.now();
       for (const [key, r] of store.entries()){
-        // Drop anything older than 24h outright
         const signed = new Date(r.signed_on || r._meta?.createdAt || now).getTime();
         if (now - signed > 24*60*60*1000) { store.delete(key); continue; }
-
-        // If the row only ever came from SSE and hasn't shown up in a poll within grace, drop it
         const src = r._meta?.source || "poll";
         const seenPoll = r._meta?.lastSeenInPoll || null;
         const createdAt = r._meta?.createdAt || now;
@@ -325,7 +327,6 @@
     }
 
     function renderTable(){
-      // Render from STORE, newest first
       const rows = Array.from(store.values()).sort((a,b) => {
         const ta = new Date(a.signed_on || a._meta?.createdAt || 0).getTime();
         const tb = new Date(b.signed_on || b._meta?.createdAt || 0).getTime();
@@ -335,8 +336,15 @@
       for (const r of rows){
         const tr = document.createElement("tr");
         tr.className = "border-b";
-        const pdfCell = r.intake_pdf_url
-          ? `<a class="link" href="${r.intake_pdf_url}" target="_blank" rel="noopener">Open PDF</a>` : "—";
+
+        // Use our proxy route if we have a waiver_id; otherwise fallback to provided URL (may 401)
+        const pdfHref = r.waiver_id
+          ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}`
+          : (r.intake_pdf_url || "");
+
+        const pdfCell = pdfHref
+          ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>`
+          : "—";
 
         const statusBadge =
           r._meta?.lastSeenInPoll
@@ -409,11 +417,10 @@
         });
       }
       document.getElementById("foot").textContent =
-        `Rows: ${rows.length}. ` +
-        `SSE grace ${Math.round(SSE_GRACE_MS/1000)}s · Poll ${Math.round(REFRESH_MS/1000)}s.`;
+        `Rows: ${rows.length}. SSE grace ${Math.round(SSE_GRACE_MS/1000)}s · Poll ${Math.round(REFRESH_MS/1000)}s.`;
     }
 
-    // ===== DIN modal (unchanged core) =====
+    // ===== DIN modal wiring =====
     const dinModal = document.getElementById("dinModal");
     const dinClose = document.getElementById("dinClose");
     const outDin = () => document.getElementById("out_din");
@@ -545,7 +552,7 @@
     // Periodic cleanup
     setInterval(() => { cleanupStore(); renderTable(); }, CLEANUP_MS);
 
-    // ----- Faster auto-refresh with visibility pause/resume -----
+    // ----- Auto-refresh with visibility pause/resume -----
     let refreshTimer = null;
     function startAutoRefresh(){
       if (refreshTimer) clearInterval(refreshTimer);
@@ -560,7 +567,7 @@
       }
     });
 
-    // ===== SSE (push) wiring: insert rows immediately on webhook events =====
+    // ===== SSE wiring =====
     function upsertRowFromWebhook(evt) {
       const r = evt?.data; if (!r) return;
       const normalized = {
