@@ -1,4 +1,4 @@
-// api/sw-webhook.js (CommonJS)
+// api/sw-webhook.js (CommonJS tolerant webhook)
 // Env: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
 const SW_API = 'https://api.smartwaiver.com/v4';
 
@@ -65,6 +65,31 @@ function normalizeParticipants(detail) {
   return out;
 }
 
+// Try very hard to find waiverId/templateId in whatever Smartwaiver sent
+function parseIncoming(req) {
+  let b = req.body;
+  // Some providers send "payload" as a JSON string
+  if (b && typeof b === 'object' && typeof b.payload === 'string') {
+    try { b = JSON.parse(b.payload); } catch {}
+  }
+  // If form-encoded with fields waiverId/templateId directly
+  if (!b || typeof b !== 'object') b = {};
+
+  // Common shapes we’ll check:
+  // { waiverId, templateId }
+  // { waiver: { waiverId, templateId } }
+  // { event: 'waiver.completed', data: { waiverId, templateId } }
+  const waiverId = b.waiverId || b.waiver_id ||
+                   b?.waiver?.waiverId || b?.waiver?.waiver_id ||
+                   b?.data?.waiverId || b?.data?.waiver_id || '';
+
+  const templateId = b.templateId || b.template_id ||
+                     b?.waiver?.templateId || b?.waiver?.template_id ||
+                     b?.data?.templateId || b?.data?.template_id || '';
+
+  return { waiverId, templateId, raw: b };
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.setHeader('Allow','POST');
@@ -72,9 +97,19 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { waiverId, templateId } = req.body || {};
-    if (!waiverId || !templateId) return res.status(400).json({ ok:false, error:'Missing waiverId/templateId' });
+    const { waiverId, templateId, raw } = parseIncoming(req);
 
+    console.log('[sw-webhook] incoming headers:', JSON.stringify(req.headers));
+    console.log('[sw-webhook] parsed body keys:', Object.keys(raw || {}));
+    console.log('[sw-webhook] waiverId:', waiverId, 'templateId:', templateId);
+
+    if (!waiverId || !templateId) {
+      // Don’t 500 — log and 200 to avoid retries storm; the poller will still pick these up
+      console.warn('[sw-webhook] Missing waiverId/templateId – ignoring');
+      return res.status(200).json({ ok:true, note:'missing ids' });
+    }
+
+    // Fetch full detail
     const detail = await swGet(`/waivers/${encodeURIComponent(waiverId)}`);
     const w = detail?.waiver || detail;
 
@@ -97,8 +132,11 @@ module.exports = async (req, res) => {
     const intakeId = process.env.INTAKE_TEMPLATE_ID || '';
     const liabilityId = process.env.LIABILITY_TEMPLATE_ID || '';
 
+    console.log('[sw-webhook] template match? intake=', templateId===intakeId, ' liability=', templateId===liabilityId);
+
     if (templateId === intakeId) {
       global.__sse_publish && global.__sse_publish('intake', payload);
+      console.log('[sw-webhook] published intake SSE for waiver', waiverId, 'participants', participants.length);
     } else if (templateId === liabilityId) {
       const removal = {
         waiver_id: waiverId,
@@ -113,11 +151,14 @@ module.exports = async (req, res) => {
         }))
       };
       global.__sse_publish && global.__sse_publish('liability', removal);
+      console.log('[sw-webhook] published liability SSE for waiver', waiverId);
+    } else {
+      console.log('[sw-webhook] non-target template received; ignoring');
     }
 
     return res.status(200).json({ ok:true });
   } catch (e) {
     console.error('sw-webhook error:', e);
-    return res.status(500).json({ ok:false, error: String(e?.message || e) });
+    return res.status(200).json({ ok:false, error: String(e?.message || e) }); // 200 to avoid Smartwaiver retry storms
   }
 };
