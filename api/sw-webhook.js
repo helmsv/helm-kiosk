@@ -1,7 +1,5 @@
-// api/sw-webhook.js
-// Smartwaiver webhook endpoint: receives waiver events and publishes SSE updates.
-// Env needed: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
-
+// api/sw-webhook.js (CommonJS)
+// Env: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
 const SW_API = 'https://api.smartwaiver.com/v4';
 
 async function swGet(path, opts = {}) {
@@ -29,24 +27,17 @@ function extractLightspeedTag(tags) {
 }
 
 function normalizeParticipants(detail) {
-  // Try participants array; fallback to top-level fields
   const out = [];
   const ps = detail?.participants;
   if (Array.isArray(ps) && ps.length) {
     ps.forEach((p, idx) => {
-      // Try to pull customParticipantFields for weight/height/skier type if they exist
       const cpf = p?.customParticipantFields || {};
-      // In your intake, we saw keys like:
-      //   Weight: cpf.{id}.displayText contains 'Weight', value numeric (lbs)
-      //   Height feet/in: two fields (Feet/Inches) → convert to total inches
-      //   Skier Type: maybe 'I'/'II'/'III'
-      const allFields = Object.values(cpf || {});
-      const weightLb = Number(allFields.find(f => /weight/i.test(f?.displayText || ''))?.value || NaN);
-      const hFeet    = Number(allFields.find(f => /height.*feet/i.test(f?.displayText || ''))?.value || NaN);
-      const hInches  = Number(allFields.find(f => /height.*inch/i.test(f?.displayText || ''))?.value || NaN);
+      const all = Object.values(cpf || {});
+      const weightLb = Number(all.find(f => /weight/i.test(f?.displayText || ''))?.value || NaN);
+      const hFeet    = Number(all.find(f => /height.*feet/i.test(f?.displayText || ''))?.value || NaN);
+      const hInches  = Number(all.find(f => /height.*inch/i.test(f?.displayText || ''))?.value || NaN);
       const totalIn  = (Number.isFinite(hFeet) ? hFeet : 0) * 12 + (Number.isFinite(hInches) ? hInches : 0);
-      // Skier Type field (your intake had “II” in debug under a field):
-      const skierType = (allFields.find(f => /skier\s*type|II|III|Type/i.test(f?.displayText || ''))?.value || '')
+      const skierType = (all.find(f => /skier\s*type|II|III|Type/i.test(f?.displayText || ''))?.value || '')
         .toString().toUpperCase().replace('TYPE ', '');
       out.push({
         participant_index: idx,
@@ -74,7 +65,7 @@ function normalizeParticipants(detail) {
   return out;
 }
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.setHeader('Allow','POST');
     return res.status(405).end('Method Not Allowed');
@@ -84,12 +75,11 @@ export default async function handler(req, res) {
     const { waiverId, templateId } = req.body || {};
     if (!waiverId || !templateId) return res.status(400).json({ ok:false, error:'Missing waiverId/templateId' });
 
-    // Fetch full waiver detail to build participants + metadata
     const detail = await swGet(`/waivers/${encodeURIComponent(waiverId)}`);
-    const w = detail?.waiver || detail; // API sometimes nests in {waiver: {...}}
+    const w = detail?.waiver || detail;
 
     const signed_on = w?.createdOn || w?.created_on || null;
-    const tags = w?.tags || w?.autoTag ? [w.autoTag, ...(w.tags || [])] : (w?.tags || []);
+    const tags = w?.tags || (w?.autoTag ? [w.autoTag] : []);
     const lsTag = extractLightspeedTag(tags);
     const participants = normalizeParticipants(w);
     const intake_pdf_url = w?.pdf ? `${SW_API}/waivers/${encodeURIComponent(waiverId)}/pdf` : '';
@@ -108,9 +98,8 @@ export default async function handler(req, res) {
     const liabilityId = process.env.LIABILITY_TEMPLATE_ID || '';
 
     if (templateId === intakeId) {
-      globalThis.__sse_publish?.('intake', payload);
+      global.__sse_publish && global.__sse_publish('intake', payload);
     } else if (templateId === liabilityId) {
-      // For liability, publish participant list when available for precise removal
       const removal = {
         waiver_id: waiverId,
         template_id: templateId,
@@ -123,9 +112,7 @@ export default async function handler(req, res) {
           email:      p.email || ''
         }))
       };
-      globalThis.__sse_publish?.('liability', removal);
-    } else {
-      // Other templates: ignore
+      global.__sse_publish && global.__sse_publish('liability', removal);
     }
 
     return res.status(200).json({ ok:true });
@@ -133,4 +120,4 @@ export default async function handler(req, res) {
     console.error('sw-webhook error:', e);
     return res.status(500).json({ ok:false, error: String(e?.message || e) });
   }
-}
+};
