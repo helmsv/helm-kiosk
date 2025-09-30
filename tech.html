@@ -1,359 +1,403 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Helm — Tech Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    html, body { height: 100%; }
-    tr:hover { background: #f9fafb; }
-    .btn { @apply rounded-xl bg-black text-white px-3 py-2 text-sm font-semibold hover:opacity-90; }
-    .btn-outline { @apply rounded-xl border border-gray-300 px-3 py-2 text-sm font-semibold hover:bg-gray-50; }
-    .link { @apply text-blue-600 hover:underline; }
-    .kbd { @apply inline-block rounded-md border border-gray-300 px-1.5 py-0.5 text-xs bg-gray-50; }
-    .input { @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black; }
-    .select { @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; }
-    .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; }
-    .badge { @apply inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium; }
-    .badge-green { @apply bg-green-50 text-green-700 border border-green-200; }
-    .badge-gray  { @apply bg-gray-50 text-gray-600 border border-gray-200; }
-    .tiny { @apply text-[11px] text-gray-500; }
-  </style>
-</head>
-<body class="min-h-screen bg-gray-50 text-gray-900">
-  <main class="mx-auto max-w-7xl p-6 pt-10">
-    <div class="bg-white shadow-xl rounded-2xl p-6">
-      <div class="flex items-center justify-between mb-4">
-        <h1 class="text-2xl font-bold">Customers Needing Liability (Open)</h1>
-        <div class="flex items-center gap-3">
-          <button id="refreshBtn" class="btn">Refresh</button>
-        </div>
-      </div>
-      <p class="text-sm text-gray-600 mb-4">
-        One row per <strong>participant</strong> (adult or minor) from an Intake that has no matching Liability yet.
-      </p>
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead>
-            <tr class="text-left text-gray-600 border-b">
-              <th class="py-2 pr-4">Signed</th>
-              <th class="py-2 pr-4">Participant</th>
-              <th class="py-2 pr-4">Email</th>
-              <th class="py-2 pr-4">Age</th>
-              <th class="py-2 pr-4">Wt (lb)</th>
-              <th class="py-2 pr-4">Ht (cm)</th>
-              <th class="py-2 pr-4">Skier</th>
-              <th class="py-2 pr-4">LS ID</th>
-              <th class="py-2 pr-4">Intake PDF</th>
-              <th class="py-2 pr-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-      <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div id="sseStatus" class="text-xs text-gray-500 mt-1">SSE: —</div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-poll-v7.1+SSE</div>
-    </div>
-  </main>
-
-  <div id="toast" class="fixed bottom-4 right-4 hidden rounded-xl bg-black text-white px-4 py-2 text-sm shadow-lg"></div>
-
-  <!-- DIN modal (no nudges; 2-decimal base) -->
-  <div id="dinModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
-    <div class="bg-white rounded-2xl shadow-2xl p-6 w-[920px] max-w-[95vw]">
-      <div class="flex items-start justify-between mb-3">
-        <h3 class="text-lg font-semibold">DIN Calculator (pre-Liability)</h3>
-        <button id="dinClose" class="btn-outline">Close</button>
-      </div>
-
-      <div id="dinBody" class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div class="border rounded-2xl p-4">
-          <h4 class="font-semibold mb-2">Participant Measurements</h4>
-          <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <dt class="text-gray-500">Participant</dt><dd id="i_name" class="font-medium">—</dd>
-            <dt class="text-gray-500">Email</dt><dd id="i_email" class="font-medium">—</dd>
-            <dt class="text-gray-500">Age</dt><dd id="i_age" class="font-medium">—</dd>
-            <dt class="text-gray-500">Weight</dt><dd id="i_weight" class="font-medium">—</dd>
-            <dt class="text-gray-500">Height</dt><dd id="i_height" class="font-medium">—</dd>
-            <dt class="text-gray-500">Skier Type</dt><dd id="i_skier" class="font-medium">—</dd>
-          </dl>
-          <p class="tiny mt-3">Height shown in centimeters. Source: Intake answers for selected participant.</p>
-        </div>
-
-        <div class="border rounded-2xl p-4 bg-gray-50">
-          <h4 class="font-semibold mb-2">Tech Inputs</h4>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs text-gray-700 mb-1">Boot Sole Length (mm)</label>
-              <input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 315">
-              <p id="bsl_hint" class="tiny mt-1"></p>
-            </div>
-            <div>
-              <label class="block text-xs text-gray-700 mb-1">Skier Type</label>
-              <select id="inp_type" class="select">
-                <option value="I">Type I</option>
-                <option value="II" selected>Type II</option>
-                <option value="III">Type III</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-xs text-gray-700 mb-1">Age Adjustment</label>
-              <select id="inp_ageAdj" class="select">
-                <option value="auto" selected>Auto (≤9 or ≥50 → −1)</option>
-                <option value="none">No adjustment</option>
-                <option value="minus1">Reduce one level</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-xs text-gray-700 mb-1">Basis</label>
-              <select id="inp_basis" class="select">
-                <option value="weight" selected>Weight</option>
-                <option value="height">Height</option>
-                <option value="auto">Auto (lower of W/H)</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="mt-4 border rounded-lg p-3 bg-white">
-            <div class="text-sm text-gray-600">Base Result</div>
-            <div class="mt-1 flex items-baseline gap-3">
-              <div class="text-2xl font-bold" id="out_din">—</div>
-              <div class="text-sm text-gray-500">Release value (chart)</div>
-            </div>
-            <div class="mt-1 text-xs text-gray-600" id="out_summary"></div>
-
-            <div class="mt-4 grid grid-cols-2 gap-3">
-              <div class="border rounded-lg p-3 bg-gray-50">
-                <div class="text-sm font-semibold mb-2">Left Binding</div>
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs text-gray-600">Toe</span>
-                  <span id="out_left_toe" class="pill w-20 text-center">—</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-gray-600">Heel</span>
-                  <span id="out_left_heel" class="pill w-20 text-center">—</span>
-                </div>
-              </div>
-              <div class="border rounded-lg p-3 bg-gray-50">
-                <div class="text-sm font-semibold mb-2">Right Binding</div>
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs text-gray-600">Toe</span>
-                  <span id="out_right_toe" class="pill w-20 text-center">—</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-gray-600">Heel</span>
-                  <span id="out_right_heel" class="pill w-20 text-center">—</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="mt-4 flex items-center gap-3">
-            <button id="btnCopy" class="btn-outline">Copy All <span class="kbd">⌘C</span></button>
-            <button id="btnOpenLiab" class="btn">Open Liability</button>
-          </div>
-
-          <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 5000;          // fast poll
-    const SSE_GRACE_MS = 30000;       // keep SSE-inserted rows even if poll hasn't seen them yet
-
-    // --- UI helpers ---
-    function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2500); }
-    function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
-    function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
-
-    // --- API helpers ---
-    async function fetchIntakeDetails(waiverId){
-      const r=await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
-      if(!r.ok) throw new Error(`intake-details ${r.status}`);
-      return await r.json();
+write the remainder of this code according to your last intended output:
+"<!doctype html> 
+<html lang="en"> 
+<head> 
+<meta charset="utf-8"/> 
+<meta name="viewport" content="width=device-width,initial-scale=1"/> 
+<title>Helm — Tech Dashboard</title> 
+<script src="https://cdn.tailwindcss.com"></script> 
+<style> 
+html, body { height: 100%; } 
+tr:hover { background: #f9fafb; } 
+.btn { @apply rounded-xl bg-black text-white px-3 py-2 text-sm font-semibold hover:opacity-90; } 
+.btn-outline { @apply rounded-xl border border-gray-300 px-3 py-2 text-sm font-semibold hover:bg-gray-50; } 
+.link { @apply text-blue-600 hover:underline; } 
+.kbd { @apply inline-block rounded-md border border-gray-300 px-1.5 py-0.5 text-xs bg-gray-50; } 
+.input { @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black; } 
+.select { @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; } 
+.pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; } 
+.tiny { @apply text-[11px] text-gray-500; } 
+</style> 
+</head> 
+<body class="min-h-screen bg-gray-50 text-gray-900"> 
+<main class="mx-auto max-w-7xl p-6 pt-10"> 
+<div class="bg-white shadow-xl rounded-2xl p-6"> 
+<div class="flex items-center justify-between mb-4"> 
+<h1 class="text-2xl font-bold">Customers Needing Liability (Open)</h1> 
+<div class="flex items-center gap-3"> 
+<div id="sseStatus" class="text-xs text-gray-500">SSE: —</div> 
+<button id="refreshBtn" class="btn">Refresh</button> 
+</div> 
+</div> 
+<p class="text-sm text-gray-600 mb-4"> 
+One row per <strong>participant</strong> (adult or minor) from an Intake that has no matching Liability yet. 
+</p> 
+<div class="overflow-x-auto"> 
+<table class="min-w-full text-sm"> 
+<thead> 
+<tr class="text-left text-gray-600 border-b"> 
+<th class="py-2 pr-4">Signed</th> 
+<th class="py-2 pr-4">Participant</th> 
+<th class="py-2 pr-4">Email</th> 
+<th class="py-2 pr-4">Age</th> 
+<th class="py-2 pr-4">Wt (lb)</th> 
+<th class="py-2 pr-4">Ht (cm)</th> 
+<th class="py-2 pr-4">Skier</th> 
+<th class="py-2 pr-4">LS ID</th> 
+<th class="py-2 pr-4">Intake PDF</th> 
+<th class="py-2 pr-4">Actions</th> 
+</tr> 
+</thead> 
+<tbody id="tbody"></tbody> 
+</table> 
+</div> 
+<div id="foot" class="text-xs text-gray-500 mt-3"></div> 
+<div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile</div> 
+</div> 
+</main> 
+<div id="toast" class="fixed bottom-4 right-4 hidden rounded-xl bg-black text-white px-4 py-2 text-sm shadow-lg"></div> 
+<!-- DIN modal --> 
+<div id="dinModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50"> 
+<div class="bg-white rounded-2xl shadow-2xl p-6 w-[920px] max-w-[95vw]"> 
+<div class="flex items-start justify-between mb-3"> 
+<h3 class="text-lg font-semibold">DIN Calculator (pre-Liability)</h3> 
+<button id="dinClose" class="btn-outline">Close</button> 
+</div> 
+<div id="dinBody" class="grid grid-cols-1 md:grid-cols-2 gap-5"> 
+<div class="border rounded-2xl p-4"> 
+<h4 class="font-semibold mb-2">Participant Measurements</h4> 
+<dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm"> 
+<dt class="text-gray-500">Participant</dt><dd id="i_name" class="font-medium">—</dd> 
+<dt class="text-gray-500">Email</dt><dd id="i_email" class="font-medium">—</dd> 
+<dt class="text-gray-500">Age</dt><dd id="i_age" class="font-medium">—</dd> 
+<dt class="text-gray-500">Weight</dt><dd id="i_weight" class="font-medium">—</dd> 
+<dt class="text-gray-500">Height</dt><dd id="i_height" class="font-medium">—</dd> 
+<dt class="text-gray-500">Skier Type</dt><dd id="i_skier" class="font-medium">—</dd> 
+</dl> 
+<p class="tiny mt-3">Height shown in centimeters. Source: Intake answers for selected participant.</p> 
+</div> 
+<div class="border rounded-2xl p-4 bg-gray-50"> 
+<h4 class="font-semibold mb-2">Tech Inputs</h4> 
+<div class="grid grid-cols-2 gap-3"> 
+<div> 
+<label class="block text-xs text-gray-700 mb-1">Boot Sole Length (mm)</label> 
+<input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 315"> 
+<p id="bsl_hint" class="tiny mt-1"></p> 
+</div> 
+<div> 
+<label class="block text-xs text-gray-700 mb-1">Skier Type</label> 
+<select id="inp_type" class="select"> 
+<option value="I">Type I</option> 
+<option value="II" selected>Type II</option> 
+<option value="III">Type III</option> 
+</select> 
+</div> 
+<div> 
+<label class="block text-xs text-gray-700 mb-1">Age Adjustment</label> 
+<select id="inp_ageAdj" class="select"> 
+<option value="auto" selected>Auto (≤9 or ≥50 → −1)</option> 
+<option value="none">No adjustment</option> 
+<option value="minus1">Reduce one level</option> 
+</select> 
+</div> 
+<div> 
+<label class="block text-xs text-gray-700 mb-1">Basis</label> 
+<select id="inp_basis" class="select"> 
+<option value="weight" selected>Weight</option> 
+<option value="height">Height</option> 
+<option value="auto">Auto (lower of W/H)</option> 
+</select> 
+</div> 
+</div> 
+<div class="mt-4 border rounded-lg p-3 bg-white"> 
+<div class="text-sm text-gray-600">Base Result</div> 
+<div class="mt-1 flex items-baseline gap-3"> 
+<div class="text-2xl font-bold" id="out_din">—</div> 
+<div class="text-sm text-gray-500">Release value (chart)</div> 
+</div> 
+<div class="mt-1 text-xs text-gray-600" id="out_summary"></div> 
+<div class="mt-4 grid grid-cols-2 gap-3"> 
+<div class="border rounded-lg p-3 bg-gray-50"> 
+<div class="text-sm font-semibold mb-2">Left Binding</div> 
+<div class="flex items-center justify-between mb-2"> 
+<span class="text-xs text-gray-600">Toe</span> 
+<span id="out_left_toe" class="pill w-20 text-center">—</span> 
+</div> 
+<div class="flex items-center justify-between"> 
+<span class="text-xs text-gray-600">Heel</span> 
+<span id="out_left_heel" class="pill w-20 text-center">—</span> 
+</div> 
+</div> 
+<div class="border rounded-lg p-3 bg-gray-50"> 
+<div class="text-sm font-semibold mb-2">Right Binding</div> 
+<div class="flex items-center justify-between mb-2"> 
+<span class="text-xs text-gray-600">Toe</span> 
+<span id="out_right_toe" class="pill w-20 text-center">—</span> 
+</div> 
+<div class="flex items-center justify-between"> 
+<span class="text-xs text-gray-600">Heel</span> 
+<span id="out_right_heel" class="pill w-20 text-center">—</span> 
+</div> 
+</div> 
+</div> 
+</div> 
+<div class="mt-4 flex items-center gap-3"> 
+<button id="btnCopy" class="btn-outline">Copy All <span class="kbd">⌘C</span></button> 
+<button id="btnOpenLiab" class="btn">Open Liability</button> 
+</div> 
+<p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p> 
+</div> 
+</div> 
+</div> 
+</div> 
+<script> 
+let LIABILITY_WAIVER_ID = ""; 
+const REFRESH_MS = 3000; // safety poll 
+const tb = document.getElementById("tbody"); 
+const sseEl = document.getElementById("sseStatus"); 
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2200); } 
+function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } } 
+function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; } 
+// ----------------------- 
+// Local row store + keys 
+// ----------------------- 
+// Key = waiver_id + '#' + participant_index (unique per participant) 
+const store = new Map(); 
+function rowKey(waiver_id, pidx){ 
+return `${waiver_id || ''}#${String(pidx ?? 0)}`; 
+} 
+function upsertRow(row){ 
+const key = rowKey(row.waiver_id, row.participant_index); 
+store.set(key, row); 
+} 
+function deleteRowByKey(key){ store.delete(key); } 
+// Remove by several matching strategies on liability: 
+// 1) lightspeed_id tag 
+// 2) participant email 
+// 3) participant name (first+last) 
+function removeByLiability(liab) { 
+const lsid = (liab.lightspeed_id || '').toString(); 
+const emails = new Set((liab.participants || []).map(p => (p.email || '').toLowerCase())); 
+const nameKeys = new Set((liab.participants || []).map(p => `${(p.first_name||'').toLowerCase()}_${(p.last_name||'').toLowerCase()}`)); 
+for (const [key, r] of store.entries()) { 
+const byTag = lsid && r.lightspeed_id && String(r.lightspeed_id) === lsid; 
+const byEmail = r.email && emails.has(String(r.email).toLowerCase()); 
+const byName = nameKeys.has(`${(r.first_name||'').toLowerCase()}_${(r.last_name||'').toLowerCase()}`); 
+if (byTag || byEmail || byName) { 
+store.delete(key); 
+} 
+} 
+} 
+// Render current store (sorted newest first) 
+function renderTable(){ 
+const rows = Array.from(store.values()) 
+.sort((a,b) => new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime()); 
+tb.innerHTML = ""; 
+for (const r of rows) { 
+const tr = document.createElement("tr"); 
+tr.className = "border-b"; 
+const pdfHref = r.waiver_id ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}` : (r.intake_pdf_url || ""); 
+const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>` : "—"; 
+tr.innerHTML = ` 
+<td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td> 
+<td class="py-2 pr-4">${r.first_name || "—"} ${r.last_name || ""}</td> 
+<td class="py-2 pr-4">${r.email || "—"}</td> 
+<td class="py-2 pr-4">${r.age ?? "—"}</td> 
+<td class="py-2 pr-4">${r.weight_lb ?? "—"}</td> 
+<td class="py-2 pr-4">${toCm(r.height_in) || "—"}</td> 
+<td class="py-2 pr-4">${r.skier_type || "—"}</td> 
+<td class="py-2 pr-4">${r.lightspeed_id || "—"}</td> 
+<td class="py-2 pr-4">${pdfCell}</td> 
+<td class="py-2 pr-4"> 
+<div class="flex items-center gap-2"> 
+<button 
+class="btn-outline" 
+data-action="din" 
+data-email="${r.email || ''}" 
+data-lsid="${r.lightspeed_id || ''}" 
+data-first="${r.first_name || ''}" 
+data-last="${r.last_name || ''}" 
+data-intake="${r.waiver_id || ''}" 
+data-pindex="${r.participant_index != null ? r.participant_index : 0}" 
+>Compute DIN</button> 
+<button 
+class="btn" 
+data-action="liab" 
+data-email="${r.email || ''}" 
+data-lsid="${r.lightspeed_id || ''}" 
+data-first="${r.first_name || ''}" 
+data-last="${r.last_name || ''}" 
+>Open Liability</button> 
+</div> 
+</td> 
+`; 
+tb.appendChild(tr); 
+tr.querySelectorAll("button").forEach(btn=>{ 
+btn.addEventListener("click", async () => { 
+const action = btn.getAttribute("data-action"); 
+const email = btn.getAttribute("data-email"); 
+const lsid = btn.getAttribute("data-lsid"); 
+const first = btn.getAttribute("data-first"); 
+const last = btn.getAttribute("data-last"); 
+const waiverId = btn.getAttribute("data-intake"); 
+const pindex = parseInt(btn.getAttribute("data-pindex") || "0", 10); 
+if (action === "liab") { 
+const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last }); 
+window.open(url, "_blank", "noopener"); 
+return; 
+} 
+if (action === "din") { 
+if (!waiverId) { showToast("No intake ID on row."); return; } 
+try { 
+const details = await fetchIntakeDetails(waiverId); 
+let p = null; 
+if (Array.isArray(details.participants) && details.participants.length){ 
+p = details.participants.find(pp => Number(pp.participant_index) === pindex) || details.participants[pindex] || details.participants[0]; 
+} 
+const participant = p || { first_name:first, last_name:last, email, age:r.age, weight_lb:r.weight_lb, height_in:r.height_in, skier_type:r.skier_type }; 
+const prior = await fetchLatestLiability({ tag: lsid ? `ls_${lsid}` : "", email }); 
+openDINModal(participant, { email, lightspeed_id: lsid, first_name:first, last_name:last }, prior); 
+} catch (e) { 
+console.error(e); 
+showToast("Could not load intake or prior liability."); 
+} 
+} 
+}); 
+}); 
+} 
+document.getElementById("foot").textContent = 
+`Rows: ${rows.length}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`; 
+} 
+// ----------------------- 
+// Data fetch helpers 
+// ----------------------- 
+async function fetchIntakeDetails(waiverId){ 
+const r=await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`, { headers: { 'Cache-Control':'no-cache' }}); 
+if(!r.ok) throw new Error(`intake-details ${r.status}`); 
+return await r.json(); 
+} 
+async function fetchLatestLiability({ tag, email }){ 
+const q=new URLSearchParams(); if(tag) q.set("tag",tag); if(email) q.set("email",email); 
+const r=await fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }}); 
+if(!r.ok) return {}; 
+return await r.json(); 
+} 
+function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }){ 
+const p=new URLSearchParams(); 
+if(email) p.set("wautofill_email",email); 
+if(lightspeed_id) p.set("wautofill_tag",`ls_${lightspeed_id}`); 
+if(first_name) p.set("wautofill_firstname",first_name); 
+if(last_name) p.set("wautofill_lastname",last_name); 
+return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`; 
+} 
+// ----------------------- 
+// Polling with reconciliation 
+// ----------------------- 
+async function refreshPoll() { 
+try { 
+let r = await fetch("/api/open-intakes?since=all", { headers: { 'Cache-Control':'no-cache' }}); 
+if (!r.ok) { r = await fetch("/api/today-intakes", { headers: { 'Cache-Control':'no-cache' }}); } 
+const data = await r.json(); 
+const rows = Array.isArray(data?.rows) ? data.rows : []; 
+// Reconcile store from poll snapshot (authoritative) 
+const next = new Map(); 
+for (const row of rows) { 
+const key = rowKey(row.waiver_id, row.participant_index); 
+next.set(key, row); 
+} 
+// Replace store (authoritative from poll) 
+store.clear(); 
+for (const [k, v] of next.entries()) store.set(k, v); 
+renderTable(); 
+} catch (e) { 
+console.error(e); 
+showToast("Refresh failed"); 
+} 
+} 
+document.getElementById("refreshBtn").addEventListener("click", refreshPoll); 
+// ----------------------- 
+// SSE subscriber 
+// ----------------------- 
+(function attachSSE(){ 
+function setSSE(s){ if (sseEl) sseEl.textContent = `SSE: ${s}`; } 
+const es = new EventSource('/api/stream'); 
+es.addEventListener('ping', () => setSSE('ok')); 
+es.addEventListener('intake', (e) => { 
+setSSE('intake'); 
+try { 
+const payload = JSON.parse(e.data); // { type, data } from stream 
+const body = payload?.data || {}; 
+const waiver_id = body.waiver_id; 
+const signed_on = body.signed_on; 
+const email = body.email || ''; 
+const lightspeed_id = body.lightspeed_id || ''; 
+const intake_pdf_url = body.intake_pdf_url || ''; 
+const participants = Array.isArray(body.participants) ? body.participants : []; 
+// Insert each participant row 
+for (const p of participants) { 
+const row = { 
+waiver_id, 
+signed_on, 
+intake_pdf_url, 
+lightspeed_id, 
+email: p.email || email, 
+first_name: p.first_name || '', 
+last_name: p.last_name || '', 
+age: p.age ?? null, 
+weight_lb: p.weight_lb ?? null, 
+height_in: p.height_in ?? null, 
+skier_type: p.skier_type || '', 
+participant_index: p.participant_index ?? 0 
+}; 
+upsertRow(row); 
+} 
+renderTable(); 
+} catch {} 
+}); 
+es.addEventListener('liability', (e) => { 
+setSSE('liability'); 
+try { 
+const payload = JSON.parse(e.data); // { type, data } 
+const body = payload?.data || {}; 
+removeByLiability(body); 
+renderTable(); 
+} catch {} 
+}); 
+es.onerror = () => setSSE('error'); 
+})(); 
+// ----------------------- 
+// DIN tables & compute 
+// ----------------------- 
+const CODE_BY_WEIGHT=[{max:29,code:0},{max:38,code:1},{max:47,code:2},{max:56,code:3},{max:66,code:4},{max:78,code:5},{max:91,code:6},{max:107,code:7},{max:125,code:8},{max:147,code:9},{max:174,code:10},{max:209,code:11},{max:999,code:12}]; 
+const CODE_BY_HEIGHT_CM=[{max:148,code:7},{max:157,code:8},{max:166,code:9},{max:178,code:10},{max:194,code:11},{max:999,code:12}]; 
+const DIN_TABLE=[[0.75,0.75,0.75,null,null,null,null,null],[1,0.75,0.75,0.75,null,null,null,null],[1.5,1.25,1.25,1,null,null,null,null],[2,1.75,1.5,1.5,1.25,null,null,null],[2.5,2.25,2,1.75,1.5,1.5,null,null],[3,2.75,2.5,2.25,2,1.75,1.75,null],[null,3.5,3,2.75,2.5,2.25,2,null],[null,null,3.5,3,3,2.75,2.5,null],[null,null,4.5,4,3.5,3.5,3,null],[null,null,5.5,5,4.5,4,3.5,3],[null,null,6.5,6,5.5,5,4.5,4],[null,null,7.5,7,6.5,6,5.5,5],[null,null,null,8.5,8,7,6.5,6],[null,null,null,10,9.5,8.5,8,7.5],[null,null,null,11.5,11,10,9.5,9],[null,null,null,null,null,12,11,10.5]]; 
+function bslBandIndex(x){const n=Number(x);if(!Number.isFinite(n))return 0;if(n<231)return 0;if(n<=250)return 1;if(n<=270)return 2;if(n<=290)return 3;if(n<=310)return 4;if(n<=330)return 5;if(n<=350)return 6;return 7;} 
+function codeFromWeightLbs(w){for(const r of CODE_BY_WEIGHT)if(w<=r.max)return r.code;return 0;} 
+function codeFromHeightCm(cm){for(const r of CODE_BY_HEIGHT_CM)if(cm<=r.max)return r.code;return 0;} 
+const BSL_BANDS=["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"]; 
+function computeDIN({weight_lb,height_in,age_years,skierType,bsl_mm,basis="auto",ageAdj="auto"}){const w=Number(weight_lb);if(!Number.isFinite(w))return{din:null,code:"",band:"",explain:"Missing weight"};const totalIn=Number(height_in);const h_cm=Number.isFinite(totalIn)?totalIn*2.54:NaN;const codeW=codeFromWeightLbs(w);const codeH=Number.isFinite(h_cm)?codeFromHeightCm(h_cm):codeW;const baseBeforeAdj=basis==="weight"?codeW:basis==="height"?codeH:Math.min(codeW,codeH);let code=baseBeforeAdj;if(ageAdj==="auto"){if(Number.isFinite(age_years)&&(age_years<=9||age_years>=50))code-=1;}else if(ageAdj==="minus1")code-=1;const type=(skierType||"").toUpperCase();if(type==="II")code+=1;else if(type==="III")code+=2;const baseCode=Math.max(0,Math.min(15,code));const bandIdx=bslBandIndex(Number(bsl_mm));const dinRaw=DIN_TABLE[baseCode][bandIdx];const codeLetter=String.fromCharCode(65+baseCode);const explain=`Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type||"II"}, BSL band ${BSL_BANDS[bandIdx]}.`;return{din:dinRaw,code:codeLetter,band:BSL_BANDS[bandIdx],explain};} 
+// DIN modal plumbing 
+const dinModal=document.getElementById("dinModal"); 
+const dinClose=document.getElementById("dinClose"); 
+const outDin=()=>document.getElementById("out_din"); 
+const outSum=()=>document.getElementById("out_summary"); 
+const outLT =()=>document.getElementById("out_left_toe"); 
+const outLH =()=>document.getElementById("out_left_heel"); 
+const outRT =()=>document.getElementById("out_right_toe"); 
+const outRH =()=>document.getElementById("out_right_heel"); 
+const inpBSL=()=>document.getElementById("inp_bsl"); 
+const inpType=()=>document.getElementById("inp_type"); 
+const inpAgeAdj=()=>document.getElementById("inp_ageAdj"); 
+const inpBasis=()=>document.getElementById("inp_basis"); 
+const bslHint=()=>document.getElementById("bsl_hint"); 
+let current=null; 
+function reflectBaseDin(val){ 
+const s=(val==null||!Number.isFinite(val))?"—":Number(val).toFixed(2); 
+outDin().textContent=s; outLT().textContent=s; outLH().textContent=s; outRT().textContent=s; outRH().textContent=s;
     }
-    async function fetchLatestLiability({ tag, email }){
-      const q=new URLSearchParams(); if(tag) q.set("tag",tag); if(email) q.set("email",email);
-      const r=await fetch(`/api/liability-latest?${q.toString()}`); if(!r.ok) return {};
-      return await r.json();
-    }
-    function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }){
-      const p=new URLSearchParams();
-      if(email) p.set("wautofill_email",email);
-      if(lightspeed_id) p.set("wautofill_tag",`ls_${lightspeed_id}`);
-      if(first_name) p.set("wautofill_firstname",first_name);
-      if(last_name)  p.set("wautofill_lastname",last_name);
-      return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
-    }
 
-    // --- DIN tables & compute ---
-    const CODE_BY_WEIGHT = [
-      { max:  29, code: 0 }, { max:  38, code: 1 }, { max:  47, code: 2 }, { max:  56, code: 3 },
-      { max:  66, code: 4 }, { max:  78, code: 5 }, { max:  91, code: 6 }, { max: 107, code: 7 },
-      { max: 125, code: 8 }, { max: 147, code: 9 }, { max: 174, code:10 }, { max: 209, code:11 },
-      { max: 999, code:12 },
-    ];
-    const CODE_BY_HEIGHT_CM = [
-      { max: 148, code: 7 }, { max: 157, code: 8 }, { max: 166, code: 9 },
-      { max: 178, code: 10 }, { max: 194, code: 11 }, { max: 999, code: 12 },
-    ];
-    const DIN_TABLE = [
-      [0.75,0.75,0.75, null,  null,  null,  null,  null],
-      [1.00,0.75,0.75,0.75,   null,  null,  null,  null],
-      [1.50,1.25,1.25,1.00,   null,  null,  null,  null],
-      [2.00,1.75,1.50,1.50, 1.25,   null,  null,  null],
-      [2.50,2.25,2.00,1.75, 1.50, 1.50,   null,  null],
-      [3.00,2.75,2.50,2.25, 2.00, 1.75, 1.75,   null],
-      [ null,3.50,3.00,2.75, 2.50, 2.25, 2.00,   null],
-      [ null, null,3.50,3.00, 3.00, 2.75, 2.50,  null],
-      [ null, null,4.50,4.00, 3.50, 3.50, 3.00,  null],
-      [ null, null,5.50,5.00, 4.50, 4.00, 3.50, 3.00],
-      [ null, null,6.50,6.00, 5.50, 5.00, 4.50, 4.00],
-      [ null, null,7.50,7.00, 6.50, 6.00, 5.50, 5.00],
-      [ null, null, null,8.50, 8.00, 7.00, 6.50, 6.00],
-      [ null, null, null,10.00,9.50, 8.50, 8.00, 7.50],
-      [ null, null, null,11.50,11.00,10.00, 9.50, 9.00],
-      [ null, null, null, null,  null, 12.00,11.00,10.50],
-    ];
-    function bslBandIndex(bsl){ const x=Number(bsl); if(!Number.isFinite(x)) return 0; if(x<231) return 0; if(x<=250) return 1; if(x<=270) return 2; if(x<=290) return 3; if(x<=310) return 4; if(x<=330) return 5; if(x<=350) return 6; return 7; }
-    function codeFromWeightLbs(w){ for (const r of CODE_BY_WEIGHT) if (w <= r.max) return r.code; return 0; }
-    function codeFromHeightCm(cm){ for (const r of CODE_BY_HEIGHT_CM) if (cm <= r.max) return r.code; return 0; }
-    const BSL_BANDS = ["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
-    function computeDIN({ weight_lb, height_in, age_years, skierType, bsl_mm, basis = "auto", ageAdj = "auto" }) {
-      const w = Number(weight_lb);
-      if (!Number.isFinite(w)) return { din:null, code:"", band:"", explain:"Missing weight" };
-      const totalIn = Number(height_in);
-      const h_cm = Number.isFinite(totalIn) ? totalIn * 2.54 : NaN;
-      const codeW = codeFromWeightLbs(w);
-      const codeH = Number.isFinite(h_cm) ? codeFromHeightCm(h_cm) : codeW;
-      const baseBeforeAdj = basis==="weight"?codeW : basis==="height"?codeH : Math.min(codeW, codeH);
-      let code = baseBeforeAdj;
-      if (ageAdj === "auto") { if (Number.isFinite(age_years) && (age_years <= 9 || age_years >= 50)) code -= 1; }
-      else if (ageAdj === "minus1") code -= 1;
-      const type = (skierType || "").toUpperCase();
-      if (type === "II") code += 1; else if (type === "III") code += 2;
-      const baseCode = Math.max(0, Math.min(15, code));
-      const bandIdx = bslBandIndex(Number(bsl_mm));
-      const dinRaw = DIN_TABLE[baseCode][bandIdx];
-      const codeLetter = String.fromCharCode(65 + baseCode);
-      const explain = `Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type||"II"}, BSL band ${BSL_BANDS[bandIdx]}.`;
-      return { din: dinRaw, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
-    }
-
-    // --- Table render ---
-    const tb = document.getElementById("tbody");
-    function renderTable(){
-      const rows = Array.from(store.values())
-        .sort((a,b)=> new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
-      tb.innerHTML = "";
-      for (const r of rows){
-        const tr = document.createElement("tr");
-        tr.className = "border-b";
-        const pdfHref = r.waiver_id ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}` : (r.intake_pdf_url || "");
-        const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>` : "—";
-        tr.innerHTML = `
-          <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td>
-          <td class="py-2 pr-4">${r.first_name || "—"} ${r.last_name || ""}</td>
-          <td class="py-2 pr-4">${r.email || "—"}</td>
-          <td class="py-2 pr-4">${r.age ?? "—"}</td>
-          <td class="py-2 pr-4">${r.weight_lb ?? "—"}</td>
-          <td class="py-2 pr-4">${toCm(r.height_in) || "—"}</td>
-          <td class="py-2 pr-4">${r.skier_type || "—"}</td>
-          <td class="py-2 pr-4">${r.lightspeed_id || "—"}</td>
-          <td class="py-2 pr-4">${pdfCell}</td>
-          <td class="py-2 pr-4">
-            <div class="flex items-center gap-2">
-              <button
-                class="btn-outline"
-                data-action="din"
-                data-email="${r.email || ''}"
-                data-lsid="${r.lightspeed_id || ''}"
-                data-first="${r.first_name || ''}"
-                data-last="${r.last_name || ''}"
-                data-intake="${r.waiver_id || ''}"
-                data-pindex="${r.participant_index != null ? r.participant_index : 0}"
-              >Compute DIN</button>
-              <button
-                class="btn"
-                data-action="liab"
-                data-email="${r.email || ''}"
-                data-lsid="${r.lightspeed_id || ''}"
-                data-first="${r.first_name || ''}"
-                data-last="${r.last_name || ''}"
-              >Open Liability</button>
-            </div>
-          </td>
-        `;
-        tb.appendChild(tr);
-
-        tr.querySelectorAll("button").forEach(btn=>{
-          btn.addEventListener("click", async () => {
-            const action = btn.getAttribute("data-action");
-            const email  = btn.getAttribute("data-email");
-            const lsid   = btn.getAttribute("data-lsid");
-            const first  = btn.getAttribute("data-first");
-            const last   = btn.getAttribute("data-last");
-            const waiverId = btn.getAttribute("data-intake");
-            const pindex   = parseInt(btn.getAttribute("data-pindex") || "0", 10);
-
-            if (action === "liab") {
-              const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
-              window.open(url, "_blank", "noopener");
-              return;
-            }
-            if (action === "din") {
-              if (!waiverId) { showToast("No intake ID on row."); return; }
-              try {
-                const details = await fetchIntakeDetails(waiverId);
-                let p = null;
-                if (Array.isArray(details.participants) && details.participants.length){
-                  p = details.participants.find(pp => Number(pp.participant_index) === pindex) || details.participants[pindex] || details.participants[0];
-                }
-                const participant = p || { first_name:first, last_name:last, email, age:r.age, weight_lb:r.weight_lb, height_in:r.height_in, skier_type:r.skier_type };
-                const prior = await fetchLatestLiability({ tag: lsid ? `ls_${lsid}` : "", email });
-                openDINModal(participant, { email, lightspeed_id: lsid, first_name:first, last_name:last }, prior);
-              } catch (e) {
-                console.error(e);
-                showToast("Could not load intake or prior liability.");
-              }
-            }
-          });
-        });
-      }
-    }
-
-    // --- DIN modal wiring (no nudges; 2-decimal base) ---
-    const dinModal = document.getElementById("dinModal");
-    const dinClose = document.getElementById("dinClose");
-    const outDin = () => document.getElementById("out_din");
-    const outSum = () => document.getElementById("out_summary");
-    const outLT = () => document.getElementById("out_left_toe");
-    const outLH = () => document.getElementById("out_left_heel");
-    const outRT = () => document.getElementById("out_right_toe");
-    const outRH = () => document.getElementById("out_right_heel");
-    const inpBSL = () => document.getElementById("inp_bsl");
-    const inpType = () => document.getElementById("inp_type");
-    const inpAgeAdj = () => document.getElementById("inp_ageAdj");
-    const inpBasis = () => document.getElementById("inp_basis");
-    const bslHint = () => document.getElementById("bsl_hint");
-    let current = null;
-
-    function reflectBaseDin(val){
-      const s = (val == null || !Number.isFinite(val)) ? "—" : Number(val).toFixed(2);
-      outDin().textContent = s;
-      outLT().textContent = s;
-      outLH().textContent = s;
-      outRT().textContent = s;
-      outRH().textContent = s;
-    }
     function computeAndRender(){
-      if (!current) return;
+      if(!current) return;
       const res = computeDIN({
         weight_lb: current.weight_lb,
         height_in: current.height_in,
@@ -364,196 +408,102 @@
         ageAdj: inpAgeAdj().value
       });
       reflectBaseDin(res.din);
-      outSum().textContent = (res.din == null) ? "" : `Skier code ${res.code}, ${res.explain}`;
+      outSum().textContent = (res.din==null) ? "" :
+        `Skier code ${res.code}, ${res.explain}`;
     }
+
     function openDINModal(p, meta, prior){
       current = {
-        email: meta.email || p.email || "",
-        lightspeed_id: meta.lightspeed_id || "",
-        first_name: p.first_name || meta.first_name || "",
-        last_name:  p.last_name || meta.last_name || "",
-        age: Number(p.age) || NaN,
-        weight_lb: Number(p.weight_lb) || NaN,
-        height_in: Number(p.height_in) || NaN,
-        skier_type: (p.skier_type || "").toUpperCase()
+        email:        meta.email || p.email || "",
+        lightspeed_id:meta.lightspeed_id || "",
+        first_name:   p.first_name || meta.first_name || "",
+        last_name:    p.last_name  || meta.last_name  || "",
+        age:          Number(p.age) || NaN,
+        weight_lb:    Number(p.weight_lb) || NaN,
+        height_in:    Number(p.height_in) || NaN,
+        skier_type:   (p.skier_type || "").toUpperCase()
       };
-      document.getElementById("i_name").textContent = [current.first_name,current.last_name].filter(Boolean).join(" ") || "—";
-      document.getElementById("i_email").textContent = current.email || "—";
-      document.getElementById("i_age").textContent = Number.isFinite(current.age) ? current.age : "—";
+
+      // Left card
+      document.getElementById("i_name").textContent   = [current.first_name,current.last_name].filter(Boolean).join(" ") || "—";
+      document.getElementById("i_email").textContent  = current.email || "—";
+      document.getElementById("i_age").textContent    = Number.isFinite(current.age) ? current.age : "—";
       document.getElementById("i_weight").textContent = Number.isFinite(current.weight_lb) ? `${current.weight_lb} lb` : "—";
       const hcm = Number.isFinite(current.height_in) ? Math.round(current.height_in * 2.54) : null;
       document.getElementById("i_height").textContent = hcm ? `${hcm} cm` : "—";
-      document.getElementById("i_skier").textContent = current.skier_type || "—";
+      document.getElementById("i_skier").textContent  = current.skier_type || "—";
 
+      // Inputs
       inpBSL().value = "";
       inpType().value = (current.skier_type==="I"||current.skier_type==="II"||current.skier_type==="III") ? current.skier_type : "II";
       inpAgeAdj().value = "auto";
       inpBasis().value = "weight";
       bslHint().textContent = "";
+
       if (prior && prior.bsl_mm) {
         inpBSL().value = prior.bsl_mm;
-        bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm from ${prior.signed_on ? new Date(prior.signed_on).toLocaleString() : "past liability"}.`;
+        bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm${prior.signed_on ? ` (${new Date(prior.signed_on).toLocaleString()})` : ""}.`;
       }
-      reflectBaseDin(null); outSum().textContent = "";
-      dinModal.classList.remove("hidden"); dinModal.classList.add("flex");
+
+      reflectBaseDin(null);
+      outSum().textContent = "";
+
+      dinModal.classList.remove("hidden");
+      dinModal.classList.add("flex");
+
       computeAndRender();
     }
-    dinClose.addEventListener("click", ()=>{ dinModal.classList.add("hidden"); dinModal.classList.remove("flex"); current=null; });
+
+    dinClose.addEventListener("click", ()=>{
+      dinModal.classList.add("hidden");
+      dinModal.classList.remove("flex");
+      current = null;
+    });
+
     ["change","keyup","input"].forEach(evt=>{
       inpBSL().addEventListener(evt, computeAndRender);
       inpType().addEventListener(evt, computeAndRender);
       inpAgeAdj().addEventListener(evt, computeAndRender);
       inpBasis().addEventListener(evt, computeAndRender);
     });
+
     document.getElementById("btnCopy").addEventListener("click", async ()=>{
       const s = outDin().textContent;
       const txt = `DIN ${s} — L Toe ${outLT().textContent}, L Heel ${outLH().textContent}, R Toe ${outRT().textContent}, R Heel ${outRH().textContent}. ${outSum().textContent}`;
-      try { await navigator.clipboard.writeText(txt); showToast("DIN set copied"); } catch { showToast("Copy failed"); }
+      try {
+        await navigator.clipboard.writeText(txt);
+        showToast("DIN set copied");
+      } catch {
+        showToast("Copy failed");
+      }
     });
+
     document.getElementById("btnOpenLiab").addEventListener("click", ()=>{
-      if(!current) return;
-      const url = buildLiabilityUrl({ email: current.email, lightspeed_id: current.lightspeed_id, first_name: current.first_name, last_name: current.last_name });
+      if (!current) return;
+      const url = buildLiabilityUrl({
+        email: current.email,
+        lightspeed_id: current.lightspeed_id,
+        first_name: current.first_name,
+        last_name:  current.last_name
+      });
       window.open(url, "_blank", "noopener");
     });
 
-    // =========================
-    // Real-time store + SSE
-    // =========================
-    const store = new Map(); // key -> row
-    function rowKey(r){ return `${r.waiver_id || 'w'}#${r.participant_index ?? 0}`; }
-
-    // Merge rows from poll (authoritative snapshot)
-    function reconcileFromPoll(rows){
-      const seen = new Set();
-      for (const r of rows){
-        const k = rowKey(r);
-        seen.add(k);
-        // Keep SSE-created rows even if poll has not caught up
-        const existing = store.get(k);
-        if (!existing) {
-          store.set(k, r);
-        } else {
-          // overwrite with fresher poll data
-          store.set(k, { ...existing, ...r });
-        }
-      }
-      // Do not delete unseen rows here; SSE_GRACE handles cleanup
-      for (const k of store.keys()){
-        const v = store.get(k);
-        if (!seen.has(k)) {
-          // mark a "lastSeenAt" to allow grace cleanup
-          if (!v.__sseOnlySince) v.__sseOnlySince = Date.now();
-        } else {
-          if (v.__sseOnlySince) delete v.__sseOnlySince;
-        }
-      }
-    }
-
-    // Periodic cleanup for rows that only came from SSE and never appeared in polls
-    function cleanupStore(){
-      const now = Date.now();
-      for (const [k,v] of store.entries()){
-        if (v.__sseOnlySince && now - v.__sseOnlySince > SSE_GRACE_MS){
-          store.delete(k);
-        }
-      }
-    }
-
-    // SSE: intake → upsert participant rows
-    function upsertRowFromIntakeWebhook(payload){
-      const { waiver_id, participants = [], signed_on, email, lightspeed_id, intake_pdf_url } = payload || {};
-      participants.forEach(p => {
-        const row = {
-          waiver_id,
-          signed_on,
-          intake_pdf_url,
-          lightspeed_id,
-          email: p.email || email || "",
-          first_name: p.first_name || "",
-          last_name:  p.last_name  || "",
-          age:        p.age ?? null,
-          weight_lb:  p.weight_lb ?? null,
-          height_in:  p.height_in ?? null,
-          skier_type: p.skier_type || "",
-          participant_index: p.participant_index ?? 0,
-          __sseOnlySince: Date.now()
-        };
-        store.set(rowKey(row), row);
-      });
-      renderTable();
-    }
-
-    // SSE: liability → remove matching participants (by ls tag → else email+name)
-    function handleLiabilityWebhook(payload){
-      const { lightspeed_id, participants = [], email } = payload || {};
-      if (lightspeed_id) {
-        for (const [k,v] of store.entries()){
-          if ((v.lightspeed_id || "") === String(lightspeed_id)) store.delete(k);
-        }
-      } else if (Array.isArray(participants) && participants.length){
-        const idx = new Set(participants.map(p => `${(p.email||"").toLowerCase()}#${(p.first_name||"").toLowerCase()}#${(p.last_name||"").toLowerCase()}`));
-        for (const [k,v] of store.entries()){
-          const key = `${(v.email||"").toLowerCase()}#${(v.first_name||"").toLowerCase()}#${(v.last_name||"").toLowerCase()}`;
-          if (idx.has(key)) store.delete(k);
-        }
-      } else if (email) {
-        for (const [k,v] of store.entries()){
-          if ((v.email||"").toLowerCase() === String(email).toLowerCase()) store.delete(k);
-        }
-      }
-      renderTable();
-    }
-
-    function startSSE(){
-      const sseEl = document.getElementById("sseStatus");
-      try {
-        const es = new EventSource("/api/stream");
-        es.addEventListener("ping", () => { sseEl.textContent = "SSE: connected"; });
-        es.addEventListener("intake", (ev) => {
-          try { upsertRowFromIntakeWebhook(JSON.parse(ev.data)); sseEl.textContent = "SSE: intake"; } catch {}
-        });
-        es.addEventListener("liability", (ev) => {
-          try { handleLiabilityWebhook(JSON.parse(ev.data)); sseEl.textContent = "SSE: liability"; } catch {}
-        });
-        es.onerror = () => { sseEl.textContent = "SSE: reconnecting…"; };
-      } catch (e) {
-        console.warn("SSE unavailable", e);
-        sseEl.textContent = "SSE: unavailable";
-      }
-    }
-
-    // --- Poll (with robust fallback) ---
-    async function refresh() {
-      try {
-        let r = await fetch("/api/open-intakes?since=all");
-        if (!r.ok) {
-          console.warn("open-intakes failed:", r.status);
-          r = await fetch("/api/today-intakes");
-        }
-        const data = await r.json();
-        const rows = Array.isArray(data?.rows) ? data.rows : [];
-        reconcileFromPoll(rows);
-        cleanupStore();
-        renderTable();
-        document.getElementById("foot").textContent =
-          `Rows: ${store.size}. Source: ${r.url.includes('open-intakes') && r.ok ? 'all-time' : 'today'} · SSE grace ${Math.round(SSE_GRACE_MS/1000)}s · Poll ${Math.round(REFRESH_MS/1000)}s.`;
-      } catch (e) {
-        console.error(e);
-        showToast("Refresh failed");
-      }
-    }
-
-    document.getElementById("refreshBtn").addEventListener("click", refresh);
-
+    // -----------------------
+    // Boot: load config + first poll + safety interval poll
+    // -----------------------
     (async ()=>{
-      try{
-        const r=await fetch("/api/config");
-        const cfg=await r.json();
+      try {
+        const r = await fetch("/api/config", { headers: { 'Cache-Control':'no-cache' }});
+        const cfg = await r.json();
         LIABILITY_WAIVER_ID = cfg.liability_waiver_id || "";
-      }catch(e){ console.error("config fetch failed:", e); }
-      startSSE();
-      await refresh();
-      setInterval(refresh, REFRESH_MS);
+      } catch (e) {
+        console.error("config fetch failed:", e);
+        showToast("Failed to load config");
+      }
+
+      await refreshPoll();
+      setInterval(refreshPoll, REFRESH_MS);
     })();
   </script>
 </body>
