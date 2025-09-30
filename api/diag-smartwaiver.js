@@ -34,6 +34,36 @@ export default async function handler(req, res) {
   }
 }
 
+// api/diag-smartwaiver.js
+const SW_BASE = process.env.SW_BASE_URL || 'https://api.smartwaiver.com/v4';
+
+async function sw(path) {
+  const key = process.env.SW_API_KEY;
+  const r = await fetch(`${SW_BASE}${path}`, {
+    headers: {
+      'x-api-key': key,
+      'X-SW-API-KEY': key,
+      'Accept': 'application/json'
+    }
+  });
+  const text = await r.text();
+  return { status: r.status, body: text };
+}
+
+module.exports = async (req, res) => {
+  try {
+    const account = await sw('/account'); // lightweight auth probe
+    res.status(200).json({
+      has_key: !!process.env.SW_API_KEY,
+      base: SW_BASE,
+      account_probe: account
+    });
+  } catch (e) {
+    res.status(200).json({ error: String(e) });
+  }
+};
+
+
 async function listSome(base, key, templateId) {
   if (!templateId) return [];
   const url = new URL(`${base}/waivers`);
