@@ -1,6 +1,8 @@
-// api/sw-webhook.js (CommonJS tolerant webhook)
-// Env: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
+// /api/sw-webhook.js
+// Env needed: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID,
+//             UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 const SW_API = 'https://api.smartwaiver.com/v4';
+const CHANNEL = 'sw-events';
 
 async function swGet(path, opts = {}) {
   const key = process.env.SW_API_KEY;
@@ -18,6 +20,30 @@ async function swGet(path, opts = {}) {
     throw new Error(`Smartwaiver ${path} ${r.status}: ${t}`);
   }
   return await r.json();
+}
+
+// ---- Upstash publish helper (REST)
+async function publish(type, data) {
+  const base = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!base || !token) {
+    console.warn('[sw-webhook] Upstash env missing; skipping publish');
+    return;
+  }
+  const url = `${base.replace(/\/+$/,'')}/publish/${CHANNEL}`;
+  const msg = JSON.stringify({ type, data });
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ message: msg })
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(()=> '');
+    console.warn('[sw-webhook] publish failed', r.status, t);
+  }
 }
 
 function extractLightspeedTag(tags) {
@@ -65,28 +91,18 @@ function normalizeParticipants(detail) {
   return out;
 }
 
-// Try very hard to find waiverId/templateId in whatever Smartwaiver sent
 function parseIncoming(req) {
   let b = req.body;
-  // Some providers send "payload" as a JSON string
   if (b && typeof b === 'object' && typeof b.payload === 'string') {
     try { b = JSON.parse(b.payload); } catch {}
   }
-  // If form-encoded with fields waiverId/templateId directly
   if (!b || typeof b !== 'object') b = {};
-
-  // Common shapes we’ll check:
-  // { waiverId, templateId }
-  // { waiver: { waiverId, templateId } }
-  // { event: 'waiver.completed', data: { waiverId, templateId } }
   const waiverId = b.waiverId || b.waiver_id ||
                    b?.waiver?.waiverId || b?.waiver?.waiver_id ||
                    b?.data?.waiverId || b?.data?.waiver_id || '';
-
   const templateId = b.templateId || b.template_id ||
                      b?.waiver?.templateId || b?.waiver?.template_id ||
                      b?.data?.templateId || b?.data?.template_id || '';
-
   return { waiverId, templateId, raw: b };
 }
 
@@ -99,19 +115,16 @@ module.exports = async (req, res) => {
   try {
     const { waiverId, templateId, raw } = parseIncoming(req);
 
-    console.log('[sw-webhook] incoming headers:', JSON.stringify(req.headers));
-    console.log('[sw-webhook] parsed body keys:', Object.keys(raw || {}));
+    console.log('[sw-webhook] parsed keys:', Object.keys(raw || {}));
     console.log('[sw-webhook] waiverId:', waiverId, 'templateId:', templateId);
 
     if (!waiverId || !templateId) {
-      // Don’t 500 — log and 200 to avoid retries storm; the poller will still pick these up
       console.warn('[sw-webhook] Missing waiverId/templateId – ignoring');
       return res.status(200).json({ ok:true, note:'missing ids' });
     }
 
-    // Fetch full detail
-    const detail = await swGet(`/waivers/${encodeURIComponent(waiverId)}`);
-    const w = detail?.waiver || detail;
+    const detailWrap = await swGet(`/waivers/${encodeURIComponent(waiverId)}`);
+    const w = detailWrap?.waiver || detailWrap;
 
     const signed_on = w?.createdOn || w?.created_on || null;
     const tags = w?.tags || (w?.autoTag ? [w.autoTag] : []);
@@ -129,14 +142,12 @@ module.exports = async (req, res) => {
       participants
     };
 
-    const intakeId = process.env.INTAKE_TEMPLATE_ID || '';
-    const liabilityId = process.env.LIABILITY_TEMPLATE_ID || '';
-
-    console.log('[sw-webhook] template match? intake=', templateId===intakeId, ' liability=', templateId===liabilityId);
+    const intakeId    = process.env.INTAKE_TEMPLATE_ID    || process.env.INTAKE_WAIVER_ID || '';
+    const liabilityId = process.env.LIABILITY_TEMPLATE_ID || process.env.LIABILITY_WAIVER_ID || '';
 
     if (templateId === intakeId) {
-      global.__sse_publish && global.__sse_publish('intake', payload);
-      console.log('[sw-webhook] published intake SSE for waiver', waiverId, 'participants', participants.length);
+      await publish('intake', payload);
+      console.log('[sw-webhook] published intake event', waiverId);
     } else if (templateId === liabilityId) {
       const removal = {
         waiver_id: waiverId,
@@ -150,15 +161,16 @@ module.exports = async (req, res) => {
           email:      p.email || ''
         }))
       };
-      global.__sse_publish && global.__sse_publish('liability', removal);
-      console.log('[sw-webhook] published liability SSE for waiver', waiverId);
+      await publish('liability', removal);
+      console.log('[sw-webhook] published liability event', waiverId);
     } else {
-      console.log('[sw-webhook] non-target template received; ignoring');
+      console.log('[sw-webhook] non-target template; ignoring');
     }
 
     return res.status(200).json({ ok:true });
   } catch (e) {
     console.error('sw-webhook error:', e);
-    return res.status(200).json({ ok:false, error: String(e?.message || e) }); // 200 to avoid Smartwaiver retry storms
+    // 200 to avoid Smartwaiver retry storms; poller will still pick them up
+    return res.status(200).json({ ok:false, error: String(e?.message || e) });
   }
 };
