@@ -1,60 +1,41 @@
-// api/open-intakes.js
-// Lists all *open* intake participants (no matching liability).
-// Supports ?since=all (default) or ?since=YYYY-MM-DD.
+// api/open-intakes.js (CommonJS)
 // Env: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
-// NOTE: This walks Smartwaiver pages; for very large histories, consider
-//       precomputing periodically or using a DB cache.
-
 const SW_API = 'https://api.smartwaiver.com/v4';
 
-// ---- Smartwaiver helpers ----
 async function swGetJSON(path, params = {}) {
   const key = process.env.SW_API_KEY;
   if (!key) throw new Error('Missing SW_API_KEY');
-
   const qs = new URLSearchParams(params);
   const url = `${SW_API}${path}${qs.toString() ? `?${qs}` : ''}`;
-  const r = await fetch(url, {
-    headers: { 'X-SW-API-KEY': key, 'Accept': 'application/json' }
-  });
+  const r = await fetch(url, { headers: { 'X-SW-API-KEY': key, 'Accept': 'application/json' } });
   if (!r.ok) {
     const t = await r.text().catch(()=>'');
     throw new Error(`SW GET ${path} ${r.status}: ${t}`);
   }
   return await r.json();
 }
-
 async function swGetDetail(waiverId) {
   const key = process.env.SW_API_KEY;
   const url = `${SW_API}/waivers/${encodeURIComponent(waiverId)}`;
-  const r = await fetch(url, {
-    headers: { 'X-SW-API-KEY': key, 'Accept': 'application/json' }
-  });
+  const r = await fetch(url, { headers: { 'X-SW-API-KEY': key, 'Accept': 'application/json' } });
   if (!r.ok) {
     const t = await r.text().catch(()=>'');
     throw new Error(`SW detail ${waiverId} ${r.status}: ${t}`);
   }
   return await r.json();
 }
-
 function extractLightspeedTag(tags) {
   if (!Array.isArray(tags)) return '';
   const t = tags.find(x => /^ls_/i.test(String(x || '')));
   return t || '';
 }
+function toISO(d) { try { return new Date(d).toISOString(); } catch { return null; } }
 
-function toISO(d) {
-  if (!d) return null;
-  try { return new Date(d).toISOString(); } catch { return null; }
-}
-
-// Flattens an intake waiver -> participant rows for UI
 function flattenIntake(waiver) {
   const w = waiver?.waiver || waiver;
   const tags = w?.tags || (w?.autoTag ? [w.autoTag] : []);
   const lsTag = extractLightspeedTag(tags);
   const lsId = lsTag ? String(lsTag).replace(/^ls_/i,'') : '';
-
   const participants = Array.isArray(w?.participants) ? w.participants : [];
   const cpfBy = (p, regex) => {
     const obj = p?.customParticipantFields || {};
@@ -63,7 +44,6 @@ function flattenIntake(waiver) {
   };
 
   if (participants.length === 0) {
-    // one-row fallback
     return [{
       waiver_id: w?.waiverId || w?.waiver_id || '',
       signed_on: w?.createdOn || w?.created_on || '',
@@ -71,7 +51,7 @@ function flattenIntake(waiver) {
       lightspeed_id: lsId,
       email: w?.email || '',
       first_name: w?.firstName || '',
-      last_name: w?.lastName || '',
+      last_name:  w?.lastName || '',
       age: w?.age ?? null,
       weight_lb: null,
       height_in: null,
@@ -114,7 +94,7 @@ function keyForLiabilityMatch(row) {
   return { tagKey, emailKey, nameKey };
 }
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   try {
     const intakeId = process.env.INTAKE_TEMPLATE_ID || '';
     const liabId   = process.env.LIABILITY_TEMPLATE_ID || '';
@@ -123,14 +103,13 @@ export default async function handler(req, res) {
     }
 
     const since = (req.query?.since || 'all').toString();
-    const fromDts = since === 'all' ? '1970-01-01T00:00:00Z' : toISO(since) || '1970-01-01T00:00:00Z';
-    const toDts   = toISO(new Date()) || undefined;
+    const fromDts = since === 'all' ? '1970-01-01T00:00:00Z' : (toISO(since) || '1970-01-01T00:00:00Z');
+    const toDts   = toISO(new Date());
 
-    // ---- 1) Pull ALL liability waivers (keys for exclusion)
+    // 1) Collect all liability keys (for exclusion)
     const liabKeys = new Set();
     let offset = 0, page = 0;
     while (true) {
-      // Smartwaiver list: limit and offset pagination; verified=true shrinks noise
       const li = await swGetJSON('/waivers', {
         templateId: liabId,
         fromDts, ...(toDts ? { toDts } : {}),
@@ -152,10 +131,10 @@ export default async function handler(req, res) {
       }
       if (!items.length || items.length < 100) break;
       offset += 100; page++;
-      if (page > 500) break; // hard safety cap (50k)
+      if (page > 500) break;
     }
 
-    // ---- 2) Walk ALL intake waivers, flatten to participant rows, filter out those with matching liability keys
+    // 2) Walk intake waivers, flatten to participants, filter out those with matching liability keys
     const rows = [];
     offset = 0; page = 0;
     while (true) {
@@ -169,7 +148,6 @@ export default async function handler(req, res) {
       const items = li?.waivers || li?.waiverSummaries || li?.data || [];
       if (!items.length) break;
 
-      // Fetch details (N extra calls). If you want faster, only call detail when row survives a coarse filter.
       for (const sum of items) {
         const detail = await swGetDetail(sum.waiverId);
         const flats = flattenIntake(detail);
@@ -185,10 +163,9 @@ export default async function handler(req, res) {
 
       if (items.length < 100) break;
       offset += 100; page++;
-      if (page > 500) break; // safety cap
+      if (page > 500) break;
     }
 
-    // Sort newest first
     rows.sort((a,b) => new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
 
     return res.status(200).json({ rows, from: fromDts, to: toDts || null });
@@ -196,4 +173,4 @@ export default async function handler(req, res) {
     console.error('open-intakes error:', e);
     return res.status(500).json({ error: String(e?.message || e) });
   }
-}
+};
