@@ -1,35 +1,46 @@
-// api/stream.js (CommonJS)
-let clients = global.__sse_clients;
-if (!clients) {
-  clients = new Set();
-  global.__sse_clients = clients;
+// api/stream.js
+export const config = { runtime: 'edge' };
+
+export default async function handler(req) {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // helper to send an SSE event
+      const send = (event, data) => {
+        const payload = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
+        controller.enqueue(encoder.encode(payload));
+      };
+
+      // Subscribe to BroadcastChannel for waiver events
+      const bc = new BroadcastChannel('sw-events');
+      bc.onmessage = (evt) => {
+        const { type, data } = evt.data || {};
+        if (type === 'intake' || type === 'liability' || type === 'ping') {
+          send(type, data || {});
+        }
+      };
+
+      // Initial ping + keepalive pings
+      send('ping', {});
+      const pingId = setInterval(() => send('ping', {}), 20000);
+
+      // Close when client disconnects
+      const abort = () => {
+        try { clearInterval(pingId); } catch {}
+        try { bc.close(); } catch {}
+        try { controller.close(); } catch {}
+      };
+      req.signal.addEventListener('abort', abort);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }
-
-global.__sse_publish = function (event, dataObj) {
-  const payload = `event: ${event}\ndata: ${JSON.stringify(dataObj)}\n\n`;
-  for (const res of clients) {
-    try { res.write(payload); } catch {}
-  }
-};
-
-module.exports = async (req, res) => {
-  if (req.method !== 'GET') {
-    res.setHeader('Allow', 'GET');
-    return res.status(405).end('Method Not Allowed');
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-
-  // initial ping
-  res.write(`event: ping\ndata: {}\n\n`);
-  clients.add(res);
-
-  req.on('close', () => {
-    clients.delete(res);
-  });
-};
