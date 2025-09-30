@@ -1,80 +1,136 @@
 // api/sw-webhook.js
-import crypto from "crypto";
+// Smartwaiver webhook endpoint: receives waiver events and publishes SSE updates.
+// Env needed: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
 
-const SW_API = "https://api.smartwaiver.com/v4";
+const SW_API = 'https://api.smartwaiver.com/v4';
 
-async function publishIntake(evt) {
-  const { UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = process.env;
-  const body = { channel: "intakes", message: JSON.stringify(evt) };
-  await fetch(`${UPSTASH_REDIS_REST_URL}/pubsub/publish/intakes`, {
-    method: "POST",
+async function swGet(path, opts = {}) {
+  const key = process.env.SW_API_KEY;
+  if (!key) throw new Error('Missing SW_API_KEY');
+  const r = await fetch(`${SW_API}${path}`, {
+    ...opts,
     headers: {
-      Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ message: JSON.stringify(evt) }),
+      'X-SW-API-KEY': key,
+      'Accept': 'application/json',
+      ...(opts.headers || {})
+    }
   });
+  if (!r.ok) {
+    const t = await r.text().catch(()=>'');
+    throw new Error(`Smartwaiver ${path} ${r.status}: ${t}`);
+  }
+  return await r.json();
 }
 
-function verifySignature(raw, sigHeader, secret) {
-  // Smartwaiver sends a signature header (name may vary by account setup).
-  // If you don’t see it in your requests, skip verification initially.
-  if (!sigHeader || !secret) return true;
-  const hmac = crypto.createHmac("sha256", secret).update(raw).digest("hex");
-  // constant-time compare
-  return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(sigHeader));
+function extractLightspeedTag(tags) {
+  if (!Array.isArray(tags)) return '';
+  const t = tags.find(x => /^ls_/i.test(String(x || '')));
+  return t || '';
+}
+
+function normalizeParticipants(detail) {
+  // Try participants array; fallback to top-level fields
+  const out = [];
+  const ps = detail?.participants;
+  if (Array.isArray(ps) && ps.length) {
+    ps.forEach((p, idx) => {
+      // Try to pull customParticipantFields for weight/height/skier type if they exist
+      const cpf = p?.customParticipantFields || {};
+      // In your intake, we saw keys like:
+      //   Weight: cpf.{id}.displayText contains 'Weight', value numeric (lbs)
+      //   Height feet/in: two fields (Feet/Inches) → convert to total inches
+      //   Skier Type: maybe 'I'/'II'/'III'
+      const allFields = Object.values(cpf || {});
+      const weightLb = Number(allFields.find(f => /weight/i.test(f?.displayText || ''))?.value || NaN);
+      const hFeet    = Number(allFields.find(f => /height.*feet/i.test(f?.displayText || ''))?.value || NaN);
+      const hInches  = Number(allFields.find(f => /height.*inch/i.test(f?.displayText || ''))?.value || NaN);
+      const totalIn  = (Number.isFinite(hFeet) ? hFeet : 0) * 12 + (Number.isFinite(hInches) ? hInches : 0);
+      // Skier Type field (your intake had “II” in debug under a field):
+      const skierType = (allFields.find(f => /skier\s*type|II|III|Type/i.test(f?.displayText || ''))?.value || '')
+        .toString().toUpperCase().replace('TYPE ', '');
+      out.push({
+        participant_index: idx,
+        first_name: p?.firstName || '',
+        last_name:  p?.lastName || '',
+        email:      p?.email || detail?.email || '',
+        age:        p?.age ?? null,
+        weight_lb:  Number.isFinite(weightLb) ? weightLb : null,
+        height_in:  Number.isFinite(totalIn) ? totalIn : null,
+        skier_type: ['I','II','III'].includes(skierType) ? skierType : ''
+      });
+    });
+  } else {
+    out.push({
+      participant_index: 0,
+      first_name: detail?.firstName || '',
+      last_name:  detail?.lastName || '',
+      email:      detail?.email || '',
+      age:        detail?.age ?? null,
+      weight_lb:  null,
+      height_in:  null,
+      skier_type: ''
+    });
+  }
+  return out;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== 'POST') {
+    res.setHeader('Allow','POST');
+    return res.status(405).end('Method Not Allowed');
+  }
 
   try {
-    const raw = await new Promise((resolve, reject) => {
-      let data = "";
-      req.on("data", (c) => (data += c));
-      req.on("end", () => resolve(data));
-      req.on("error", reject);
-    });
+    const { waiverId, templateId } = req.body || {};
+    if (!waiverId || !templateId) return res.status(400).json({ ok:false, error:'Missing waiverId/templateId' });
 
-    const sig = req.headers["x-sw-signature"] || req.headers["x-smartwaiver-signature"];
-    const okSig = verifySignature(raw, String(sig || ""), process.env.SW_WEBHOOK_SECRET);
-    if (!okSig) return res.status(401).json({ error: "bad signature" });
+    // Fetch full waiver detail to build participants + metadata
+    const detail = await swGet(`/waivers/${encodeURIComponent(waiverId)}`);
+    const w = detail?.waiver || detail; // API sometimes nests in {waiver: {...}}
 
-    // Acknowledge FAST so Smartwaiver doesn’t retry
-    res.status(200).json({ ok: true });
+    const signed_on = w?.createdOn || w?.created_on || null;
+    const tags = w?.tags || w?.autoTag ? [w.autoTag, ...(w.tags || [])] : (w?.tags || []);
+    const lsTag = extractLightspeedTag(tags);
+    const participants = normalizeParticipants(w);
+    const intake_pdf_url = w?.pdf ? `${SW_API}/waivers/${encodeURIComponent(waiverId)}/pdf` : '';
 
-    // Parse webhook: Smartwaiver sends at least a waiverId (name can vary)
-    let payload;
-    try { payload = JSON.parse(raw); } catch { payload = {}; }
-    const waiverId = payload.waiverId || payload.id || payload.waiver_id;
-    if (!waiverId) return;
-
-    // Fetch the full waiver (v4)
-    const r = await fetch(`${SW_API}/waivers/${encodeURIComponent(waiverId)}`, {
-      headers: { "X-SW-API-KEY": process.env.SW_API_KEY, Accept: "application/json" },
-    });
-    if (!r.ok) return;
-    const j = await r.json();
-
-    // Normalize fields to the structure your tech page expects
-    const w = j?.waiver || j; // SDK vs raw
-    const summary = {
-      waiver_id: w.waiverId || waiverId,
-      template_id: w.templateId || "",
-      signed_on: w.createdOn || w.signedOn || new Date().toISOString(),
-      email: w.email || w?.participants?.[0]?.email || "",
-      first_name: w.firstName || w?.participants?.[0]?.firstName || "",
-      last_name: w.lastName || w?.participants?.[0]?.lastName || "",
-      // your intake uses tag "ls_<lightspeed_id>"
-      lightspeed_id: (Array.isArray(w.tags) ? w.tags : []).map(String).find(t => t.startsWith("ls_"))?.slice(3) || "",
-      intake_pdf_url: w.pdf || "",
-      // If you want to filter to “intake” only here, check templateId === INTAKE_TEMPLATE_ID
+    const payload = {
+      waiver_id: waiverId,
+      template_id: templateId,
+      signed_on,
+      email: w?.email || '',
+      lightspeed_id: lsTag ? String(lsTag).replace(/^ls_/i,'') : '',
+      intake_pdf_url,
+      participants
     };
 
-    // Publish to Redis pub/sub
-    await publishIntake({ type: "intake_signed", data: summary });
+    const intakeId = process.env.INTAKE_TEMPLATE_ID || '';
+    const liabilityId = process.env.LIABILITY_TEMPLATE_ID || '';
+
+    if (templateId === intakeId) {
+      globalThis.__sse_publish?.('intake', payload);
+    } else if (templateId === liabilityId) {
+      // For liability, publish participant list when available for precise removal
+      const removal = {
+        waiver_id: waiverId,
+        template_id: templateId,
+        signed_on,
+        lightspeed_id: payload.lightspeed_id || '',
+        email: payload.email || '',
+        participants: participants.map(p => ({
+          first_name: p.first_name || '',
+          last_name:  p.last_name || '',
+          email:      p.email || ''
+        }))
+      };
+      globalThis.__sse_publish?.('liability', removal);
+    } else {
+      // Other templates: ignore
+    }
+
+    return res.status(200).json({ ok:true });
   } catch (e) {
-    // Don’t throw — we already ACK’d the webhook
-    console.error("sw-webhook error:", e);
+    console.error('sw-webhook error:', e);
+    return res.status(500).json({ ok:false, error: String(e?.message || e) });
   }
 }
