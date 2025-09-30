@@ -53,13 +53,14 @@
         </table>
       </div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-poll-v7.1</div>
+      <div id="sseStatus" class="text-xs text-gray-500 mt-1">SSE: —</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-poll-v7.1+SSE</div>
     </div>
   </main>
 
   <div id="toast" class="fixed bottom-4 right-4 hidden rounded-xl bg-black text-white px-4 py-2 text-sm shadow-lg"></div>
 
-  <!-- DIN modal (unchanged visuals; no nudges; 2-decimal base) -->
+  <!-- DIN modal (no nudges; 2-decimal base) -->
   <div id="dinModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
     <div class="bg-white rounded-2xl shadow-2xl p-6 w-[920px] max-w-[95vw]">
       <div class="flex items-start justify-between mb-3">
@@ -163,12 +164,15 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 5000; // 5s fast poll
+    const REFRESH_MS = 5000;          // fast poll
+    const SSE_GRACE_MS = 30000;       // keep SSE-inserted rows even if poll hasn't seen them yet
 
+    // --- UI helpers ---
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2500); }
     function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
-    function toCmFromInches(totalIn){ const n=Number(totalIn); if(!Number.isFinite(n)) return ""; return Math.round(n*2.54); }
+    function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
+    // --- API helpers ---
     async function fetchIntakeDetails(waiverId){
       const r=await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
       if(!r.ok) throw new Error(`intake-details ${r.status}`);
@@ -188,7 +192,7 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
-    // DIN tables (unchanged)
+    // --- DIN tables & compute ---
     const CODE_BY_WEIGHT = [
       { max:  29, code: 0 }, { max:  38, code: 1 }, { max:  47, code: 2 }, { max:  56, code: 3 },
       { max:  66, code: 4 }, { max:  78, code: 5 }, { max:  91, code: 6 }, { max: 107, code: 7 },
@@ -242,10 +246,11 @@
       return { din: dinRaw, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
     }
 
+    // --- Table render ---
     const tb = document.getElementById("tbody");
-    function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
-
-    function renderRows(rows){
+    function renderTable(){
+      const rows = Array.from(store.values())
+        .sort((a,b)=> new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
       tb.innerHTML = "";
       for (const r of rows){
         const tr = document.createElement("tr");
@@ -323,7 +328,7 @@
       }
     }
 
-    // DIN modal wiring
+    // --- DIN modal wiring (no nudges; 2-decimal base) ---
     const dinModal = document.getElementById("dinModal");
     const dinClose = document.getElementById("dinClose");
     const outDin = () => document.getElementById("out_din");
@@ -411,14 +416,131 @@
       window.open(url, "_blank", "noopener");
     });
 
-    async function refresh(){
-      try{
-        // Narrow window for speed; tweak hours:n if you want longer history
-        const r = await fetch("/api/open-intakes?since=hours:72");
+    // =========================
+    // Real-time store + SSE
+    // =========================
+    const store = new Map(); // key -> row
+    function rowKey(r){ return `${r.waiver_id || 'w'}#${r.participant_index ?? 0}`; }
+
+    // Merge rows from poll (authoritative snapshot)
+    function reconcileFromPoll(rows){
+      const seen = new Set();
+      for (const r of rows){
+        const k = rowKey(r);
+        seen.add(k);
+        // Keep SSE-created rows even if poll has not caught up
+        const existing = store.get(k);
+        if (!existing) {
+          store.set(k, r);
+        } else {
+          // overwrite with fresher poll data
+          store.set(k, { ...existing, ...r });
+        }
+      }
+      // Do not delete unseen rows here; SSE_GRACE handles cleanup
+      for (const k of store.keys()){
+        const v = store.get(k);
+        if (!seen.has(k)) {
+          // mark a "lastSeenAt" to allow grace cleanup
+          if (!v.__sseOnlySince) v.__sseOnlySince = Date.now();
+        } else {
+          if (v.__sseOnlySince) delete v.__sseOnlySince;
+        }
+      }
+    }
+
+    // Periodic cleanup for rows that only came from SSE and never appeared in polls
+    function cleanupStore(){
+      const now = Date.now();
+      for (const [k,v] of store.entries()){
+        if (v.__sseOnlySince && now - v.__sseOnlySince > SSE_GRACE_MS){
+          store.delete(k);
+        }
+      }
+    }
+
+    // SSE: intake → upsert participant rows
+    function upsertRowFromIntakeWebhook(payload){
+      const { waiver_id, participants = [], signed_on, email, lightspeed_id, intake_pdf_url } = payload || {};
+      participants.forEach(p => {
+        const row = {
+          waiver_id,
+          signed_on,
+          intake_pdf_url,
+          lightspeed_id,
+          email: p.email || email || "",
+          first_name: p.first_name || "",
+          last_name:  p.last_name  || "",
+          age:        p.age ?? null,
+          weight_lb:  p.weight_lb ?? null,
+          height_in:  p.height_in ?? null,
+          skier_type: p.skier_type || "",
+          participant_index: p.participant_index ?? 0,
+          __sseOnlySince: Date.now()
+        };
+        store.set(rowKey(row), row);
+      });
+      renderTable();
+    }
+
+    // SSE: liability → remove matching participants (by ls tag → else email+name)
+    function handleLiabilityWebhook(payload){
+      const { lightspeed_id, participants = [], email } = payload || {};
+      if (lightspeed_id) {
+        for (const [k,v] of store.entries()){
+          if ((v.lightspeed_id || "") === String(lightspeed_id)) store.delete(k);
+        }
+      } else if (Array.isArray(participants) && participants.length){
+        const idx = new Set(participants.map(p => `${(p.email||"").toLowerCase()}#${(p.first_name||"").toLowerCase()}#${(p.last_name||"").toLowerCase()}`));
+        for (const [k,v] of store.entries()){
+          const key = `${(v.email||"").toLowerCase()}#${(v.first_name||"").toLowerCase()}#${(v.last_name||"").toLowerCase()}`;
+          if (idx.has(key)) store.delete(k);
+        }
+      } else if (email) {
+        for (const [k,v] of store.entries()){
+          if ((v.email||"").toLowerCase() === String(email).toLowerCase()) store.delete(k);
+        }
+      }
+      renderTable();
+    }
+
+    function startSSE(){
+      const sseEl = document.getElementById("sseStatus");
+      try {
+        const es = new EventSource("/api/stream");
+        es.addEventListener("ping", () => { sseEl.textContent = "SSE: connected"; });
+        es.addEventListener("intake", (ev) => {
+          try { upsertRowFromIntakeWebhook(JSON.parse(ev.data)); sseEl.textContent = "SSE: intake"; } catch {}
+        });
+        es.addEventListener("liability", (ev) => {
+          try { handleLiabilityWebhook(JSON.parse(ev.data)); sseEl.textContent = "SSE: liability"; } catch {}
+        });
+        es.onerror = () => { sseEl.textContent = "SSE: reconnecting…"; };
+      } catch (e) {
+        console.warn("SSE unavailable", e);
+        sseEl.textContent = "SSE: unavailable";
+      }
+    }
+
+    // --- Poll (with robust fallback) ---
+    async function refresh() {
+      try {
+        let r = await fetch("/api/open-intakes?since=all");
+        if (!r.ok) {
+          console.warn("open-intakes failed:", r.status);
+          r = await fetch("/api/today-intakes");
+        }
         const data = await r.json();
-        renderRows(Array.isArray(data.rows)? data.rows : []);
-        document.getElementById("foot").textContent = `Rows: ${(data.rows||[]).length}. Window: ${data.from || "?"} → ${data.to || "?"}.`;
-      }catch(e){ console.error(e); showToast("Failed to refresh list"); }
+        const rows = Array.isArray(data?.rows) ? data.rows : [];
+        reconcileFromPoll(rows);
+        cleanupStore();
+        renderTable();
+        document.getElementById("foot").textContent =
+          `Rows: ${store.size}. Source: ${r.url.includes('open-intakes') && r.ok ? 'all-time' : 'today'} · SSE grace ${Math.round(SSE_GRACE_MS/1000)}s · Poll ${Math.round(REFRESH_MS/1000)}s.`;
+      } catch (e) {
+        console.error(e);
+        showToast("Refresh failed");
+      }
     }
 
     document.getElementById("refreshBtn").addEventListener("click", refresh);
@@ -429,6 +551,7 @@
         const cfg=await r.json();
         LIABILITY_WAIVER_ID = cfg.liability_waiver_id || "";
       }catch(e){ console.error("config fetch failed:", e); }
+      startSSE();
       await refresh();
       setInterval(refresh, REFRESH_MS);
     })();
