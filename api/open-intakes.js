@@ -1,4 +1,4 @@
-// api/open-intakes.js (CommonJS)
+// api/open-intakes.js (CommonJS, tolerant list + no verified filter)
 // Env: SW_API_KEY, INTAKE_TEMPLATE_ID, LIABILITY_TEMPLATE_ID
 const SW_API = 'https://api.smartwaiver.com/v4';
 
@@ -31,12 +31,18 @@ function extractLightspeedTag(tags) {
 }
 function toISO(d) { try { return new Date(d).toISOString(); } catch { return null; } }
 
+function waiversFromList(json) {
+  // Different accounts return different shapes
+  return json?.waivers || json?.waiverSummaries || json?.data || [];
+}
+
 function flattenIntake(waiver) {
   const w = waiver?.waiver || waiver;
   const tags = w?.tags || (w?.autoTag ? [w.autoTag] : []);
   const lsTag = extractLightspeedTag(tags);
   const lsId = lsTag ? String(lsTag).replace(/^ls_/i,'') : '';
   const participants = Array.isArray(w?.participants) ? w.participants : [];
+
   const cpfBy = (p, regex) => {
     const obj = p?.customParticipantFields || {};
     const arr = Object.values(obj);
@@ -106,18 +112,17 @@ module.exports = async (req, res) => {
     const fromDts = since === 'all' ? '1970-01-01T00:00:00Z' : (toISO(since) || '1970-01-01T00:00:00Z');
     const toDts   = toISO(new Date());
 
-    // 1) Collect all liability keys (for exclusion)
+    // 1) Collect liability keys (for exclusion) — NO verified filter
     const liabKeys = new Set();
-    let offset = 0, page = 0;
+    let offset = 0; let page = 0;
     while (true) {
       const li = await swGetJSON('/waivers', {
         templateId: liabId,
         fromDts, ...(toDts ? { toDts } : {}),
-        verified: 'true',
         limit: 100,
         offset
       });
-      const items = li?.waivers || li?.waiverSummaries || li?.data || [];
+      const items = waiversFromList(li);
       for (const sum of items) {
         const tags = sum?.tags || (sum?.autoTag ? [sum.autoTag] : []);
         const lsTag = extractLightspeedTag(tags);
@@ -131,21 +136,20 @@ module.exports = async (req, res) => {
       }
       if (!items.length || items.length < 100) break;
       offset += 100; page++;
-      if (page > 500) break;
+      if (page > 800) break; // safety cap
     }
 
-    // 2) Walk intake waivers, flatten to participants, filter out those with matching liability keys
+    // 2) Intake → flatten participants → exclude if liability exists
     const rows = [];
     offset = 0; page = 0;
     while (true) {
       const li = await swGetJSON('/waivers', {
         templateId: intakeId,
         fromDts, ...(toDts ? { toDts } : {}),
-        verified: 'true',
         limit: 100,
         offset
       });
-      const items = li?.waivers || li?.waiverSummaries || li?.data || [];
+      const items = waiversFromList(li);
       if (!items.length) break;
 
       for (const sum of items) {
@@ -163,11 +167,10 @@ module.exports = async (req, res) => {
 
       if (items.length < 100) break;
       offset += 100; page++;
-      if (page > 500) break;
+      if (page > 800) break;
     }
 
     rows.sort((a,b) => new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
-
     return res.status(200).json({ rows, from: fromDts, to: toDts || null });
   } catch (e) {
     console.error('open-intakes error:', e);
