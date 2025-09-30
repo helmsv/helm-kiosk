@@ -93,13 +93,15 @@ async function swFetch(path, init = {}) {
   const r = await fetch(`${SW_BASE}${path}`, {
     ...init,
     headers: {
-      'X-SW-API-KEY': key,            // Smartwaiver v4 header
+      // Send both header names; API Gateway cares about x-api-key
+      'x-api-key': key,
+      'X-SW-API-KEY': key,
       'Accept': 'application/json',
       ...(init.headers || {})
     }
   });
   if (!r.ok) {
-    const text = await r.text().catch(()=> '');
+    const text = await r.text().catch(() => '');
     throw new Error(`SW ${path} ${r.status} ${text}`);
   }
   return r.json();
