@@ -1,5 +1,5 @@
 // api/today-intakes.js
-const SW_BASE = process.env.SW_BASE_URL || 'https://api.smartwaiver.com/v4';
+const SW_BASE = process.env.SW_BASE_URL || 'https://api.smartwaiver.com/';
 
 function cleanKey(v) {
   if (!v) return '';
