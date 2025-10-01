@@ -13,6 +13,8 @@ function cleanKey(v) {
 async function swGet(path, key) {
   const url = `${API_BASE}${path}`;
   const baseHeaders = { Accept: 'application/json' };
+
+  // Try sw-api-key first (v4), then x-api-key as fallback
   let r = await fetch(url, { headers: { ...baseHeaders, 'sw-api-key': key }, cache: 'no-store' });
   if (r.status === 401) {
     r = await fetch(url, { headers: { ...baseHeaders, 'x-api-key': key }, cache: 'no-store' });
@@ -53,12 +55,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // "All time" recent window — no date filters so your list actually fills.
-    // You can later add pagination; for now grab a generous page.
+    // v4: limit must be 1..300
     const qs = new URLSearchParams({
       templateId: intakeId,
       verified: 'true',
-      limit: '500'
+      limit: '300'
     });
 
     const payload = await swGet(`/waivers?${qs.toString()}`, key);
