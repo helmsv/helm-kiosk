@@ -14,7 +14,6 @@ async function swGet(path, key) {
   const url = `${API_BASE}${path}`;
   const baseHeaders = { Accept: 'application/json' };
 
-  // Try sw-api-key first (v4), then x-api-key as fallback
   let r = await fetch(url, { headers: { ...baseHeaders, 'sw-api-key': key }, cache: 'no-store' });
   if (r.status === 401) {
     r = await fetch(url, { headers: { ...baseHeaders, 'x-api-key': key }, cache: 'no-store' });
@@ -47,20 +46,18 @@ export default async function handler(req, res) {
   try {
     const key = cleanKey(process.env.SW_API_KEY);
     const intakeId = process.env.INTAKE_WAIVER_ID;
-
     if (!key || !intakeId) {
-      return res.status(200).json({
-        rows: [],
-        error: 'Missing Smartwaiver env (SW_API_KEY / INTAKE_WAIVER_ID)',
-      });
+      return res.status(200).json({ rows: [], error: 'Missing Smartwaiver env (SW_API_KEY / INTAKE_WAIVER_ID)' });
     }
 
-    // v4: limit must be 1..300
+    const { from, to } = req.query || {};
     const qs = new URLSearchParams({
       templateId: intakeId,
       verified: 'true',
       limit: '300'
     });
+    if (from) qs.set('fromDts', from);
+    if (to)   qs.set('toDts', to);
 
     const payload = await swGet(`/waivers?${qs.toString()}`, key);
     const waivers = Array.isArray(payload?.waivers) ? payload.waivers : [];
