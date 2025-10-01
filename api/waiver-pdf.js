@@ -1,26 +1,38 @@
-// api/waiver-pdf.js (CommonJS)
+// api/waiver-pdf.js
+const SW_BASE = (process.env.SW_BASE_URL || 'https://api.smartwaiver.com').replace(/\/+$/, '');
+const API_BASE = `${SW_BASE}/v4`;
+
+function cleanKey(v) {
+  if (!v) return '';
+  let t = String(v).trim();
+  const m = t.match(/^"(.*)"$/);
+  if (m) t = m[1];
+  return t.replace(/[^\x20-\x7E]+/g, '');
+}
+
 module.exports = async (req, res) => {
   try {
-    const { waiverId } = req.query || {};
-    if (!waiverId) return res.status(400).send("Missing waiverId");
-    const key = process.env.SW_API_KEY;
-    if (!key) return res.status(500).send("Server missing SW_API_KEY");
+    const key = cleanKey(process.env.SW_API_KEY);
+    const waiverId = req.query.waiverId || req.query.id;
+    if (!key || !waiverId) return res.status(400).send('Missing key or waiverId');
 
-    const url = `https://api.smartwaiver.com/v4/waivers/${encodeURIComponent(waiverId)}/pdf`;
-    const r = await fetch(url, {
-      headers: { "X-SW-API-KEY": key, "Accept": "application/pdf" }
-    });
-
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      return res.status(r.status).send(txt || "Failed to fetch PDF");
+    const url = `${API_BASE}/waivers/${encodeURIComponent(waiverId)}`;
+    const headers = { Accept: 'application/json', 'sw-api-key': key };
+    let r = await fetch(url, { headers, cache: 'no-store' });
+    if (r.status === 401) {
+      r = await fetch(url, { headers: { ...headers, 'x-api-key': key }, cache: 'no-store' });
     }
-    const ab = await r.arrayBuffer();
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Cache-Control", "private, max-age=300");
-    res.status(200).send(Buffer.from(ab));
+    if (!r.ok) {
+      const t = await r.text().catch(()=> '');
+      return res.status(502).send(`Smartwaiver error ${r.status}: ${t.slice(0, 400)}`);
+    }
+    const payload = await r.json();
+    const pdf = payload?.waiver?.pdf || payload?.pdf;
+    if (!pdf) return res.status(404).send('PDF not available for this waiver');
+    // Redirect the browser to Smartwaiver’s PDF URL
+    res.writeHead(302, { Location: pdf });
+    res.end();
   } catch (e) {
-    console.error("waiver-pdf error:", e);
-    res.status(500).send("Internal error");
+    res.status(500).send(String(e));
   }
 };
