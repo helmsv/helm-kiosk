@@ -21,16 +21,25 @@
 <body class="min-h-screen bg-gray-50 text-gray-900">
   <main class="mx-auto max-w-7xl p-6 pt-10">
     <div class="bg-white shadow-xl rounded-2xl p-6">
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between mb-3">
         <h1 class="text-2xl font-bold">Customers Needing Liability (Open)</h1>
         <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-gray-600">From</label>
+            <input id="fromDate" type="date" class="input !py-1 !px-2 w-[150px]"/>
+            <label class="text-xs text-gray-600">To</label>
+            <input id="toDate" type="date" class="input !py-1 !px-2 w-[150px]"/>
+            <button id="applyRange" class="btn-outline">Apply</button>
+          </div>
           <div id="sseStatus" class="text-xs text-gray-500">SSE: —</div>
           <button id="refreshBtn" class="btn">Refresh</button>
         </div>
       </div>
+
       <p class="text-sm text-gray-600 mb-4">
         One row per <strong>participant</strong> (adult or minor) from an Intake that has no matching Liability yet.
       </p>
+
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
           <thead>
@@ -50,8 +59,9 @@
           <tbody id="tbody"></tbody>
         </table>
       </div>
+
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v2</div>
     </div>
   </main>
 
@@ -161,39 +171,39 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 3000; // safety poll fallback
-
+    const REFRESH_MS = 3000; // safety poll
     const tb = document.getElementById("tbody");
     const sseEl = document.getElementById("sseStatus");
+    const fromDateEl = document.getElementById('fromDate');
+    const toDateEl   = document.getElementById('toDate');
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2200); }
     function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
     function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
-    // -----------------------
-    // Local row store + keys
-    // -----------------------
-    const store = new Map(); // key -> row
-    function rowKey(waiver_id, pidx){ return `${waiver_id || ''}#${String(pidx ?? 0)}`; }
-    function upsertRow(row){ store.set(rowKey(row.waiver_id, row.participant_index), row); }
-    function removeByLiability(liab) {
-      const lsid = (liab.lightspeed_id || '').toString();
-      const emails = new Set((liab.participants || []).map(p => (p.email || '').toLowerCase()));
-      const nameKeys = new Set((liab.participants || []).map(p => `${(p.first_name||'').toLowerCase()}_${(p.last_name||'').toLowerCase()}`));
-      for (const [key, r] of store.entries()) {
-        const byTag = lsid && r.lightspeed_id && String(r.lightspeed_id) === lsid;
-        const byEmail = r.email && emails.has(String(r.email).toLowerCase());
-        const byName = nameKeys.has(`${(r.first_name||'').toLowerCase()}_${(r.last_name||'').toLowerCase()}`);
-        if (byTag || byEmail || byName) store.delete(key);
-      }
+    // Date helpers -> ISO string in UTC for SW v4 fromDts/toDts
+    function dayStartUTC(d){ const dt = new Date(d); dt.setHours(0,0,0,0); return dt.toISOString(); }
+    function dayEndUTC(d){ const dt = new Date(d); dt.setHours(23,59,59,999); return dt.toISOString(); }
+    function setDefaultDatesToday(){
+      const t = new Date();
+      const yyyy = t.getFullYear();
+      const mm = String(t.getMonth()+1).padStart(2,'0');
+      const dd = String(t.getDate()).padStart(2,'0');
+      if (!fromDateEl.value) fromDateEl.value = `${yyyy}-${mm}-${dd}`;
+      if (!toDateEl.value)   toDateEl.value   = `${yyyy}-${mm}-${dd}`;
     }
 
     // -----------------------
-    // Render
+    // Local row store + keys
     // -----------------------
+    const store = new Map(); // key => row
+    function rowKey(waiver_id, pidx){ return `${waiver_id || ''}#${String(pidx ?? 0)}`; }
+    function upsertRow(row){ store.set(rowKey(row.waiver_id, row.participant_index), row); }
+
+    // Render current store (sorted newest first)
     function renderTable(){
       const rows = Array.from(store.values())
-        .sort((a,b) => new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
+        .sort((a,b)=> new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
 
       tb.innerHTML = "";
       for (const r of rows) {
@@ -239,13 +249,13 @@
 
         tr.querySelectorAll("button").forEach(btn=>{
           btn.addEventListener("click", async () => {
-            const action  = btn.getAttribute("data-action");
-            const email   = btn.getAttribute("data-email");
-            const lsid    = btn.getAttribute("data-lsid");
-            const first   = btn.getAttribute("data-first");
-            const last    = btn.getAttribute("data-last");
-            const waiverId= btn.getAttribute("data-intake");
-            const pindex  = parseInt(btn.getAttribute("data-pindex") || "0", 10);
+            const action = btn.getAttribute("data-action");
+            const email  = btn.getAttribute("data-email");
+            const lsid   = btn.getAttribute("data-lsid");
+            const first  = btn.getAttribute("data-first");
+            const last   = btn.getAttribute("data-last");
+            const waiverId = btn.getAttribute("data-intake");
+            const pindex   = parseInt(btn.getAttribute("data-pindex") || "0", 10);
 
             if (action === "liab") {
               const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
@@ -280,6 +290,18 @@
     // -----------------------
     // Data fetch helpers
     // -----------------------
+    async function fetchIntakes(fromISO, toISO){
+      const q = new URLSearchParams({ from: fromISO, to: toISO });
+      const r = await fetch(`/api/open-intakes?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
+      const data = await r.json();
+      return Array.isArray(data?.rows) ? data.rows : [];
+    }
+    async function fetchLiabilities(fromISO, toISO){
+      const q = new URLSearchParams({ from: fromISO, to: toISO });
+      const r = await fetch(`/api/open-liabilities?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
+      const data = await r.json();
+      return Array.isArray(data?.rows) ? data.rows : [];
+    }
     async function fetchIntakeDetails(waiverId){
       const r=await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`, { headers: { 'Cache-Control':'no-cache' }});
       if(!r.ok) throw new Error(`intake-details ${r.status}`);
@@ -301,57 +323,71 @@
     }
 
     // -----------------------
-    // Polling with reconciliation (fail-soft)
+    // Poll with reconciliation
     // -----------------------
-    async function refreshPoll() {
-      try {
-        let r = await fetch("/api/open-intakes?since=all", { headers: { 'Cache-Control':'no-cache' }});
-        let src = "open-intakes(all)";
-        if (!r.ok) {
-          r = await fetch("/api/today-intakes", { headers: { 'Cache-Control':'no-cache' }});
-          src = "today-intakes";
-        }
-        const data = await r.json();
-        const rows = Array.isArray(data?.rows) ? data.rows : [];
+    function normalize(s){ return (s||'').toString().trim().toLowerCase(); }
+    function makeLiabilityIndex(liabs){
+      const byTag = new Set();
+      const byEmail = new Set();
+      const byName = new Set();
 
-        // Only replace store if we actually got rows; preserve existing otherwise
-        if (rows.length > 0) {
-          const next = new Map();
-          for (const row of rows) next.set(rowKey(row.waiver_id, row.participant_index), row);
-          store.clear();
-          for (const [k,v] of next.entries()) store.set(k,v);
-        } else {
-          console.warn(`[poll] ${src} returned 0 rows; keeping current table`);
-        }
+      for (const w of liabs){
+        const tag = (w.autoTag||'').toString();
+        if (tag.startsWith('ls_')) byTag.add(tag.slice(3));
 
-              // In tech.html, after you receive data from refreshPoll()
-      // (You already call renderTable(); add this before it)
-      if (!rows.length) {
-        console.warn('No rows from API. Inspect:', data);
-        }
+        const em = normalize(w.email);
+        if (em) byEmail.add(em);
 
-        
+        const nk = `${normalize(w.firstName)}_${normalize(w.lastName)}`.trim();
+        if (nk !== '_') byName.add(nk);
+      }
+      return { byTag, byEmail, byName };
+    }
+
+    function applyReconciliation(intakeRows, liabIdx){
+      const out = [];
+      for (const r of intakeRows){
+        const tagHit = r.lightspeed_id && liabIdx.byTag.has(String(r.lightspeed_id));
+        const emailHit = r.email && liabIdx.byEmail.has(normalize(r.email));
+        const nameHit = liabIdx.byName.has(`${normalize(r.first_name)}_${normalize(r.last_name)}`);
+        if (tagHit || emailHit || nameHit) continue; // drop if already has liability
+        out.push(r);
+      }
+      return out;
+    }
+
+    async function refreshPoll(){
+      try{
+        const fromISO = dayStartUTC(fromDateEl.value || new Date());
+        const toISO   = dayEndUTC(toDateEl.value   || new Date());
+
+        const [intakes, liabs] = await Promise.all([
+          fetchIntakes(fromISO, toISO),
+          fetchLiabilities(fromISO, toISO)
+        ]);
+
+        const liabIdx = makeLiabilityIndex(liabs);
+
+        store.clear();
+        for (const row of applyReconciliation(intakes, liabIdx)){
+          upsertRow(row);
+        }
         renderTable();
-        document.getElementById("foot").textContent =
-          `Rows: ${store.size}. Source: ${src}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
-      } catch (e) {
+      }catch(e){
         console.error(e);
         showToast("Refresh failed");
       }
     }
 
     document.getElementById("refreshBtn").addEventListener("click", refreshPoll);
+    document.getElementById("applyRange").addEventListener("click", refreshPoll);
 
     // -----------------------
-    // SSE subscriber (fail-soft)
+    // SSE subscriber (still removes live)
     // -----------------------
     (function attachSSE(){
       function setSSE(s){ if (sseEl) sseEl.textContent = `SSE: ${s}`; }
-      let es;
-      try { es = new EventSource('/api/stream'); }
-      catch { setSSE('error'); return; }
-
-      es.addEventListener('open', () => setSSE('open'));
+      const es = new EventSource('/api/stream');
       es.addEventListener('ping', () => setSSE('ok'));
 
       es.addEventListener('intake', (e) => {
@@ -365,8 +401,15 @@
           const lightspeed_id = body.lightspeed_id || '';
           const intake_pdf_url = body.intake_pdf_url || '';
           const participants = Array.isArray(body.participants) ? body.participants : [];
+
+          // Respect current date window — skip if outside
+          const t = new Date(signed_on).toISOString();
+          const winFrom = dayStartUTC(fromDateEl.value);
+          const winTo   = dayEndUTC(toDateEl.value);
+          if (t < winFrom || t > winTo) return;
+
           for (const p of participants) {
-            upsertRow({
+            const row = {
               waiver_id,
               signed_on,
               intake_pdf_url,
@@ -379,12 +422,11 @@
               height_in: p.height_in ?? null,
               skier_type: p.skier_type || '',
               participant_index: p.participant_index ?? 0
-            });
+            };
+            upsertRow(row);
           }
           renderTable();
-        } catch(err) {
-          console.error('SSE intake parse error:', err);
-        }
+        } catch {}
       });
 
       es.addEventListener('liability', (e) => {
@@ -392,18 +434,26 @@
         try {
           const payload = JSON.parse(e.data);
           const body = payload?.data || {};
-          removeByLiability(body);
+          // quick live removal matchers
+          const lsid = (body.lightspeed_id || '').toString();
+          const emails = new Set((body.participants || []).map(p => (p.email || '').toLowerCase()));
+          const nameKeys = new Set((body.participants || []).map(p => `${(p.first_name||'').toLowerCase()}_${(p.last_name||'').toLowerCase()}`));
+
+          for (const [key, r] of Array.from(store.entries())) {
+            const byTag = lsid && r.lightspeed_id && String(r.lightspeed_id) === lsid;
+            const byEmail = r.email && emails.has(String(r.email).toLowerCase());
+            const byName = nameKeys.has(`${(r.first_name||'').toLowerCase()}_${(r.last_name||'').toLowerCase()}`);
+            if (byTag || byEmail || byName) store.delete(key);
+          }
           renderTable();
-        } catch(err) {
-          console.error('SSE liability parse error:', err);
-        }
+        } catch {}
       });
 
       es.onerror = () => setSSE('error');
     })();
 
     // -----------------------
-    // DIN tables & compute
+    // DIN logic (unchanged math)
     // -----------------------
     const CODE_BY_WEIGHT=[{max:29,code:0},{max:38,code:1},{max:47,code:2},{max:56,code:3},{max:66,code:4},{max:78,code:5},{max:91,code:6},{max:107,code:7},{max:125,code:8},{max:147,code:9},{max:174,code:10},{max:209,code:11},{max:999,code:12}];
     const CODE_BY_HEIGHT_CM=[{max:148,code:7},{max:157,code:8},{max:166,code:9},{max:178,code:10},{max:194,code:11},{max:999,code:12}];
@@ -413,23 +463,24 @@
     function codeFromHeightCm(cm){for(const r of CODE_BY_HEIGHT_CM)if(cm<=r.max)return r.code;return 0;}
     const BSL_BANDS=["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
     function computeDIN({weight_lb,height_in,age_years,skierType,bsl_mm,basis="auto",ageAdj="auto"}){
-      const w=Number(weight_lb); if(!Number.isFinite(w)) return {din:null,code:"",band:"",explain:"Missing weight"};
-      const totalIn=Number(height_in); const h_cm=Number.isFinite(totalIn)? totalIn*2.54 : NaN;
-      const codeW=codeFromWeightLbs(w); const codeH=Number.isFinite(h_cm)? codeFromHeightCm(h_cm) : codeW;
-      const baseBeforeAdj = basis==="weight" ? codeW : basis==="height" ? codeH : Math.min(codeW,codeH);
-      let code = baseBeforeAdj;
-      if (ageAdj==="auto"){ if (Number.isFinite(age_years) && (age_years<=9 || age_years>=50)) code-=1; }
-      else if (ageAdj==="minus1") code-=1;
-      const type=(skierType||"").toUpperCase(); if (type==="II") code+=1; else if (type==="III") code+=2;
+      const w=Number(weight_lb); if(!Number.isFinite(w))return{din:null,code:"",band:"",explain:"Missing weight"};
+      const totalIn=Number(height_in); const h_cm=Number.isFinite(totalIn)?totalIn*2.54:NaN;
+      const codeW=codeFromWeightLbs(w);
+      const codeH=Number.isFinite(h_cm)?codeFromHeightCm(h_cm):codeW;
+      const baseBeforeAdj=basis==="weight"?codeW:basis==="height"?codeH:Math.min(codeW,codeH);
+      let code=baseBeforeAdj;
+      if(ageAdj==="auto"){ if(Number.isFinite(age_years)&&(age_years<=9||age_years>=50))code-=1; }
+      else if(ageAdj==="minus1")code-=1;
+      const type=(skierType||"").toUpperCase();
+      if(type==="II")code+=1; else if(type==="III")code+=2;
       const baseCode=Math.max(0,Math.min(15,code));
       const bandIdx=bslBandIndex(Number(bsl_mm));
       const dinRaw=DIN_TABLE[baseCode][bandIdx];
       const codeLetter=String.fromCharCode(65+baseCode);
       const explain=`Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type||"II"}, BSL band ${BSL_BANDS[bandIdx]}.`;
-      return { din: dinRaw, code: codeLetter, band: BSL_BANDS[bandIdx], explain };
+      return{din:dinRaw,code:codeLetter,band:BSL_BANDS[bandIdx],explain};
     }
 
-    // DIN modal plumbing
     const dinModal=document.getElementById("dinModal");
     const dinClose=document.getElementById("dinClose");
     const outDin=()=>document.getElementById("out_din");
@@ -461,7 +512,12 @@
         ageAdj: inpAgeAdj().value
       });
       reflectBaseDin(res.din);
-      outSum().textContent = (res.din==null) ? "" : `Skier code ${res.code}, ${res.explain}`;
+      outSum().textContent = (res.din==null) ? "" :
+        `Skier code ${res.code}, ${res.explain}`;
+    }
+    async function fetchLatestLiabilityWrap(lsid, email){
+      const tag = lsid ? `ls_${lsid}` : "";
+      try { return await fetchLatestLiability({ tag, email }); } catch { return {}; }
     }
     function openDINModal(p, meta, prior){
       current = {
@@ -487,15 +543,25 @@
       inpAgeAdj().value = "auto";
       inpBasis().value = "weight";
       bslHint().textContent = "";
+
       if (prior && prior.bsl_mm) {
         inpBSL().value = prior.bsl_mm;
         bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm${prior.signed_on ? ` (${new Date(prior.signed_on).toLocaleString()})` : ""}.`;
       }
-      reflectBaseDin(null); outSum().textContent = "";
-      dinModal.classList.remove("hidden"); dinModal.classList.add("flex");
+
+      reflectBaseDin(null);
+      outSum().textContent = "";
+
+      dinModal.classList.remove("hidden");
+      dinModal.classList.add("flex");
+
       computeAndRender();
     }
-    dinClose.addEventListener("click", ()=>{ dinModal.classList.add("hidden"); dinModal.classList.remove("flex"); current=null; });
+    dinClose.addEventListener("click", ()=>{
+      dinModal.classList.add("hidden");
+      dinModal.classList.remove("flex");
+      current = null;
+    });
     ["change","keyup","input"].forEach(evt=>{
       inpBSL().addEventListener(evt, computeAndRender);
       inpType().addEventListener(evt, computeAndRender);
@@ -509,7 +575,12 @@
     });
     document.getElementById("btnOpenLiab").addEventListener("click", ()=>{
       if (!current) return;
-      const url = buildLiabilityUrl({ email: current.email, lightspeed_id: current.lightspeed_id, first_name: current.first_name, last_name: current.last_name });
+      const url = buildLiabilityUrl({
+        email: current.email,
+        lightspeed_id: current.lightspeed_id,
+        first_name: current.first_name,
+        last_name:  current.last_name
+      });
       window.open(url, "_blank", "noopener");
     });
 
@@ -517,6 +588,7 @@
     // Boot
     // -----------------------
     (async ()=>{
+      setDefaultDatesToday();
       try {
         const r = await fetch("/api/config", { headers: { 'Cache-Control':'no-cache' }});
         const cfg = await r.json();
