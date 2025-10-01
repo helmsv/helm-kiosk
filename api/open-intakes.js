@@ -12,14 +12,14 @@ function cleanKey(v) {
 
 async function swGet(path, key) {
   const url = `${API_BASE}${path}`;
-  const headers = { Accept: 'application/json', 'sw-api-key': key };
-  let r = await fetch(url, { headers, cache: 'no-store' });
+  const baseHeaders = { Accept: 'application/json' };
+  let r = await fetch(url, { headers: { ...baseHeaders, 'sw-api-key': key }, cache: 'no-store' });
   if (r.status === 401) {
-    r = await fetch(url, { headers: { ...headers, 'x-api-key': key }, cache: 'no-store' });
+    r = await fetch(url, { headers: { ...baseHeaders, 'x-api-key': key }, cache: 'no-store' });
   }
   if (!r.ok) {
     const text = await r.text().catch(() => '');
-    throw new Error(`${path} ${r.status} ${text.slice(0, 400)}`);
+    throw new Error(`${path} ${r.status} ${text.slice(0, 500)}`);
   }
   return r.json();
 }
@@ -41,7 +41,7 @@ function mapWaiverToRow(w) {
   };
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   try {
     const key = cleanKey(process.env.SW_API_KEY);
     const intakeId = process.env.INTAKE_WAIVER_ID;
@@ -53,8 +53,8 @@ module.exports = async (req, res) => {
       });
     }
 
-    // For "since=all" we just fetch a big page of verified waivers by template.
-    // (If needed, you can paginate or add fromDts in the future.)
+    // "All time" recent window — no date filters so your list actually fills.
+    // You can later add pagination; for now grab a generous page.
     const qs = new URLSearchParams({
       templateId: intakeId,
       verified: 'true',
@@ -62,11 +62,11 @@ module.exports = async (req, res) => {
     });
 
     const payload = await swGet(`/waivers?${qs.toString()}`, key);
-    const list = Array.isArray(payload?.waivers) ? payload.waivers : [];
-    const rows = list.map(mapWaiverToRow);
+    const waivers = Array.isArray(payload?.waivers) ? payload.waivers : [];
+    const rows = waivers.map(mapWaiverToRow);
 
     res.status(200).json({ rows, count: rows.length });
   } catch (e) {
     res.status(200).json({ rows: [], error: String(e) });
   }
-};
+}
