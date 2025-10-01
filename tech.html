@@ -324,6 +324,13 @@
           console.warn(`[poll] ${src} returned 0 rows; keeping current table`);
         }
 
+              // In tech.html, after you receive data from refreshPoll()
+      // (You already call renderTable(); add this before it)
+      if (!rows.length) {
+        console.warn('No rows from API. Inspect:', data);
+        }
+
+        
         renderTable();
         document.getElementById("foot").textContent =
           `Rows: ${store.size}. Source: ${src}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
