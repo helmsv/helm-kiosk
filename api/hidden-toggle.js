@@ -1,17 +1,22 @@
-// api/hidden-toggle.js
+// api/hidden-toggle.js  (Node / pages API-style)
 import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 const HIDDEN_KEY = process.env.REDIS_HIDDEN_SET_KEY || "tech:hidden:v1";
-const TICK_KEY = process.env.REDIS_TICK_KEY || "tech:version";
+const TICK_KEY   = process.env.REDIS_TICK_KEY || "tech:version";
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
   res.setHeader("Cache-Control", "no-store");
 
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "POST only" });
+    return;
+  }
+
   try {
+    // In Node functions, req.body can be an object OR a string depending on framework config.
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const key = String(body?.key || "").trim();
+    const key  = String(body?.key || "").trim();
     const hide = Boolean(body?.hide);
     if (!key) return res.status(400).json({ error: "Missing key" });
 
@@ -24,11 +29,11 @@ export default async function handler(req, res) {
       changed = r === 1;
     }
 
-    // Nudge your SSE to “tick” so all clients refresh promptly
+    // nudge everyone via your SSE "tick"
     try { await redis.incr(TICK_KEY); } catch {}
 
-    return res.status(200).json({ ok: true, hidden: hide, key, changed });
+    res.status(200).json({ ok: true, hidden: hide, key, changed });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    res.status(500).json({ error: String(e) });
   }
 }
