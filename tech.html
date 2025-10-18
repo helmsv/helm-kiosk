@@ -61,7 +61,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v2</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v3</div>
     </div>
   </main>
 
@@ -383,12 +383,35 @@
     document.getElementById("applyRange").addEventListener("click", refreshPoll);
 
     // -----------------------
-    // SSE subscriber (still removes live)
+    // SSE subscriber (+ tick -> refresh now)
     // -----------------------
     (function attachSSE(){
       function setSSE(s){ if (sseEl) sseEl.textContent = `SSE: ${s}`; }
       const es = new EventSource('/api/stream');
+
+      // track last version we've seen and coalesce bursts
+      let lastVersion = 0;
+      let tickTimer = null;
+      const scheduleTickRefresh = () => {
+        if (tickTimer) return;
+        tickTimer = setTimeout(() => {
+          tickTimer = null;
+          refreshPoll();
+        }, 150); // tiny debounce to coalesce multiple bumps
+      };
+
+      es.addEventListener('open', () => setSSE('connected'));
       es.addEventListener('ping', () => setSSE('ok'));
+
+      // NEW: react to version ticks from Redis (any new intake/liability)
+      es.addEventListener('tick', (e) => {
+        const v = parseInt((e.data || '0'), 10) || 0;
+        if (v > lastVersion) {
+          lastVersion = v;
+          setSSE(`tick v${v}`);
+          scheduleTickRefresh();
+        }
+      });
 
       es.addEventListener('intake', (e) => {
         setSSE('intake');
