@@ -253,19 +253,27 @@
       }
     }
     async function serverToggleHide(key, hide){
-      try{
-        const r = await fetch('/api/hidden-toggle', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({ key, hide })
-        });
-        const data = await r.json();
-        return !!data?.ok;
-      }catch(e){
-        console.error('hidden-toggle', e);
-        return false;
-      }
+  try{
+    const r = await fetch('/api/hidden-toggle', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ key, hide })
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(()=> '');
+      throw new Error(`HTTP ${r.status} ${txt}`);
     }
+    const data = await r.json().catch(()=> ({}));
+    if (!data?.ok) throw new Error(`Bad response ${JSON.stringify(data)}`);
+    // after a successful toggle, re-pull the hidden set so *all* tabs/devices stay in sync
+    await fetchHiddenKeys();
+    return true;
+  }catch(e){
+    console.error('hidden-toggle', e);
+    showToast(`Hide toggle failed: ${e.message || e}`);
+    return false;
+  }
+}
 
     // Global "show hidden" UI state (defaults to HIDE on page load)
     let showHidden = false;
@@ -368,18 +376,16 @@
             }
 
             if (action === "toggle-hide") {
-              const k = btn.getAttribute("data-key");
-              const willHide = !hiddenSet.has(k);
-              const ok = await serverToggleHide(k, willHide);
-              if (ok) {
-                if (willHide) hiddenSet.add(k); else hiddenSet.delete(k);
-                showToast(willHide ? "Row hidden" : "Row unhidden");
-                renderTable();
-              } else {
-                showToast("Hide toggle failed");
-              }
-              return;
+            const k = btn.getAttribute("data-key");
+            const willHide = !hiddenSet.has(k);
+            const ok = await serverToggleHide(k, willHide);
+            if (ok) {
+              // hiddenSet refreshed in serverToggleHide(); just re-render
+              showToast(willHide ? "Row hidden" : "Row unhidden");
+              renderTable();
             }
+            return;
+          }
           });
         });
       }
