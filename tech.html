@@ -61,7 +61,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v3</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v3-utcfix</div>
     </div>
   </main>
 
@@ -178,12 +178,26 @@
     const toDateEl   = document.getElementById('toDate');
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2200); }
-    function fmtTime(s){ try{ return new Date(s).toLocaleString(); }catch{ return s||"—"; } }
     function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
-    // Date helpers -> ISO string in UTC for SW v4 fromDts/toDts
-    function dayStartUTC(d){ const dt = new Date(d); dt.setHours(0,0,0,0); return dt.toISOString(); }
-    function dayEndUTC(d){ const dt = new Date(d); dt.setHours(23,59,59,999); return dt.toISOString(); }
+    // --- Time parsing & range helpers (UTC-safe) ---
+    function parseSWDateMs(s) {
+      if (!s) return NaN;
+      // If already ISO (has 'T'), use native parser
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return new Date(s).getTime();
+      // Smartwaiver v4 often returns "YYYY-MM-DD HH:mm:ss" (UTC)
+      const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+      if (m) {
+        const [, y, mo, d, h, mi, se] = m;
+        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
+      }
+      return new Date(s).getTime();
+    }
+    function fmtTime(s) {
+      const ms = parseSWDateMs(s);
+      if (!Number.isFinite(ms)) return s || "—";
+      return new Date(ms).toLocaleString();
+    }
     function setDefaultDatesToday(){
       const t = new Date();
       const yyyy = t.getFullYear();
@@ -191,6 +205,17 @@
       const dd = String(t.getDate()).padStart(2,'0');
       if (!fromDateEl.value) fromDateEl.value = `${yyyy}-${mm}-${dd}`;
       if (!toDateEl.value)   toDateEl.value   = `${yyyy}-${mm}-${dd}`;
+    }
+    function rangeBoundsMs() {
+      const f = fromDateEl.value || new Date();
+      const t = toDateEl.value   || new Date();
+      const fs = new Date(f); fs.setHours(0, 0, 0, 0);
+      const te = new Date(t); te.setHours(23, 59, 59, 999);
+      return { startMs: fs.getTime(), endMs: te.getTime() };
+    }
+    function rangeBoundsISO() {
+      const { startMs, endMs } = rangeBoundsMs();
+      return { fromISO: new Date(startMs).toISOString(), toISO: new Date(endMs).toISOString() };
     }
 
     // -----------------------
@@ -203,7 +228,7 @@
     // Render current store (sorted newest first)
     function renderTable(){
       const rows = Array.from(store.values())
-        .sort((a,b)=> new Date(b.signed_on).getTime() - new Date(a.signed_on).getTime());
+        .sort((a,b)=> parseSWDateMs(b.signed_on) - parseSWDateMs(a.signed_on));
 
       tb.innerHTML = "";
       for (const r of rows) {
@@ -358,8 +383,7 @@
 
     async function refreshPoll(){
       try{
-        const fromISO = dayStartUTC(fromDateEl.value || new Date());
-        const toISO   = dayEndUTC(toDateEl.value   || new Date());
+        const { fromISO, toISO } = rangeBoundsISO();
 
         const [intakes, liabs] = await Promise.all([
           fetchIntakes(fromISO, toISO),
@@ -403,7 +427,7 @@
       es.addEventListener('open', () => setSSE('connected'));
       es.addEventListener('ping', () => setSSE('ok'));
 
-      // NEW: react to version ticks from Redis (any new intake/liability)
+      // react to version ticks from backend
       es.addEventListener('tick', (e) => {
         const v = parseInt((e.data || '0'), 10) || 0;
         if (v > lastVersion) {
@@ -425,11 +449,10 @@
           const intake_pdf_url = body.intake_pdf_url || '';
           const participants = Array.isArray(body.participants) ? body.participants : [];
 
-          // Respect current date window — skip if outside
-          const t = new Date(signed_on).toISOString();
-          const winFrom = dayStartUTC(fromDateEl.value);
-          const winTo   = dayEndUTC(toDateEl.value);
-          if (t < winFrom || t > winTo) return;
+          // Respect current date window — skip if outside (using ms)
+          const tMs = parseSWDateMs(signed_on);
+          const { startMs, endMs } = rangeBoundsMs();
+          if (!Number.isFinite(tMs) || tMs < startMs || tMs > endMs) return;
 
           for (const p of participants) {
             const row = {
