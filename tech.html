@@ -10,11 +10,12 @@
     tr:hover { background: #f9fafb; }
     .btn { @apply rounded-xl bg-black text-white px-3 py-2 text-sm font-semibold hover:opacity-90; }
     .btn-outline { @apply rounded-xl border border-gray-300 px-3 py-2 text-sm font-semibold hover:bg-gray-50; }
+    .btn-danger { @apply rounded-xl border border-red-300 text-red-700 px-3 py-2 text-sm font-semibold hover:bg-red-50; }
     .link { @apply text-blue-600 hover:underline; }
     .kbd { @apply inline-block rounded-md border border-gray-300 px-1.5 py-0.5 text-xs bg-gray-50; }
     .input { @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black; }
     .select { @apply w-full rounded-xl border border-gray-300 p-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black; appearance: none; }
-    .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-1 text-sm bg-white; }
+    .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-0.5 text-xs bg-white; }
     .tiny { @apply text-[11px] text-gray-500; }
   </style>
 </head>
@@ -31,6 +32,7 @@
             <input id="toDate" type="date" class="input !py-1 !px-2 w-[150px]"/>
             <button id="applyRange" class="btn-outline">Apply</button>
           </div>
+          <button id="toggleHidden" class="btn-outline">Show Hidden</button>
           <div id="sseStatus" class="text-xs text-gray-500">SSE: —</div>
           <button id="refreshBtn" class="btn">Refresh</button>
         </div>
@@ -61,7 +63,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v4-localday</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v6-redis-hide</div>
     </div>
   </main>
 
@@ -176,9 +178,9 @@
     const sseEl = document.getElementById("sseStatus");
     const fromDateEl = document.getElementById('fromDate');
     const toDateEl   = document.getElementById('toDate');
+    const toggleHiddenBtn = document.getElementById('toggleHidden');
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2200); }
-    function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
     // --- Time parsing & range helpers (UTC-safe + local-day filtering) ---
     function parseSWDateMs(s) {
@@ -199,7 +201,7 @@
     function pad(n){ return String(n).padStart(2,'0'); }
     function localDateKeyFromMs(ms){
       const d = new Date(ms);
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; // YYYY-MM-DD
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }
     function localDateKeyFromSW(s){
       const ms = parseSWDateMs(s);
@@ -214,20 +216,12 @@
       if (!fromDateEl.value) fromDateEl.value = `${yyyy}-${mm}-${dd}`;
       if (!toDateEl.value)   toDateEl.value   = `${yyyy}-${mm}-${dd}`;
     }
-    // Start of selected "from" (local) -> ISO (UTC)
     function startOfDayISOLocal(dStr){
-      const d = new Date(dStr);
-      d.setHours(0,0,0,0);
-      return d.toISOString();
+      const d = new Date(dStr); d.setHours(0,0,0,0); return d.toISOString();
     }
-    // Start of day after selected "to" (exclusive, local) -> ISO (UTC)
     function startOfNextDayISOLocal(dStr){
-      const d = new Date(dStr);
-      d.setHours(0,0,0,0);
-      d.setDate(d.getDate()+1);
-      return d.toISOString();
+      const d = new Date(dStr); d.setHours(0,0,0,0); d.setDate(d.getDate()+1); return d.toISOString();
     }
-    // In-range test by *local calendar day* (inclusive)
     function inLocalDayRange(signed_on){
       const key = localDateKeyFromSW(signed_on);
       if (!key) return false;
@@ -235,6 +229,7 @@
       const toKey   = toDateEl.value;
       return (key >= fromKey && key <= toKey);
     }
+    function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
     // -----------------------
     // Local row store + keys
@@ -243,21 +238,64 @@
     function rowKey(waiver_id, pidx){ return `${waiver_id || ''}#${String(pidx ?? 0)}`; }
     function upsertRow(row){ store.set(rowKey(row.waiver_id, row.participant_index), row); }
 
+    // -----------------------
+    // Global HIDE state via Redis
+    // -----------------------
+    const hiddenSet = new Set(); // populated from server
+    async function fetchHiddenKeys(){
+      try{
+        const r = await fetch('/api/hidden-list', { headers: { 'Cache-Control':'no-cache' }});
+        const data = await r.json();
+        hiddenSet.clear();
+        (data?.keys || []).forEach(k => hiddenSet.add(String(k)));
+      }catch(e){
+        console.error('hidden-list', e);
+      }
+    }
+    async function serverToggleHide(key, hide){
+      try{
+        const r = await fetch('/api/hidden-toggle', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ key, hide })
+        });
+        const data = await r.json();
+        return !!data?.ok;
+      }catch(e){
+        console.error('hidden-toggle', e);
+        return false;
+      }
+    }
+
+    // Global "show hidden" UI state (defaults to HIDE on page load)
+    let showHidden = false;
+    function reflectHiddenToggle(){
+      toggleHiddenBtn.textContent = showHidden ? 'Hide Hidden' : 'Show Hidden';
+    }
+
     // Render current store (sorted newest first)
     function renderTable(){
-      const rows = Array.from(store.values())
+      const rowsAll = Array.from(store.values())
         .sort((a,b)=> parseSWDateMs(b.signed_on) - parseSWDateMs(a.signed_on));
 
+      const visible = showHidden ? rowsAll : rowsAll.filter(r => !hiddenSet.has(rowKey(r.waiver_id, r.participant_index)));
+
       tb.innerHTML = "";
-      for (const r of rows) {
+      for (const r of visible) {
         const tr = document.createElement("tr");
+        const key = rowKey(r.waiver_id, r.participant_index);
+        const hidden = hiddenSet.has(key);
+
         tr.className = "border-b";
+        if (hidden && showHidden) tr.classList.add("opacity-50");
+
         const pdfHref = r.waiver_id ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}` : (r.intake_pdf_url || "");
         const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>` : "—";
+        const hiddenPill = hidden && showHidden ? `<span class="pill">Hidden</span>` : "";
 
         tr.innerHTML = `
           <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td>
-          <td class="py-2 pr-4">${r.first_name || "—"} ${r.last_name || ""}</td>
+          <td class="py-2 pr-4">${r.first_name || "—"} ${r.last_name || ""} ${hiddenPill}</td>
           <td class="py-2 pr-4">${r.email || "—"}</td>
           <td class="py-2 pr-4">${r.age ?? "—"}</td>
           <td class="py-2 pr-4">${r.weight_lb ?? "—"}</td>
@@ -285,6 +323,11 @@
                 data-first="${r.first_name || ''}"
                 data-last="${r.last_name || ''}"
               >Open Liability</button>
+              <button
+                class="${hidden ? 'btn-outline' : 'btn-danger'}"
+                data-action="toggle-hide"
+                data-key="${key}"
+              >${hidden ? 'Unhide' : 'Hide'}</button>
             </div>
           </td>
         `;
@@ -321,27 +364,45 @@
                 console.error(e);
                 showToast("Could not load intake or prior liability.");
               }
+              return;
+            }
+
+            if (action === "toggle-hide") {
+              const k = btn.getAttribute("data-key");
+              const willHide = !hiddenSet.has(k);
+              const ok = await serverToggleHide(k, willHide);
+              if (ok) {
+                if (willHide) hiddenSet.add(k); else hiddenSet.delete(k);
+                showToast(willHide ? "Row hidden" : "Row unhidden");
+                renderTable();
+              } else {
+                showToast("Hide toggle failed");
+              }
+              return;
             }
           });
         });
       }
 
+      const total = rowsAll.length;
+      const hiddenCount = rowsAll.filter(r => hiddenSet.has(rowKey(r.waiver_id, r.participant_index))).length;
+      const suppressed = total - visible.length;
       const fromKey = fromDateEl.value, toKey = toDateEl.value;
       document.getElementById("foot").textContent =
-        `Rows: ${rows.length}. Range (local days): ${fromKey} → ${toKey}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
+        `Rows: ${visible.length} (hidden total: ${hiddenCount}${showHidden ? ' shown' : `, suppressed: ${suppressed}`}). Range (local days): ${fromKey} → ${toKey}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
     }
 
     // -----------------------
     // Data fetch helpers
     // -----------------------
     async function fetchIntakes(fromISO, toISOExclusive){
-      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive }); // 'to' = exclusive next-day start
+      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive });
       const r = await fetch(`/api/open-intakes?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       const data = await r.json();
       return Array.isArray(data?.rows) ? data.rows : [];
     }
     async function fetchLiabilities(fromISO, toISOExclusive){
-      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive }); // 'to' = exclusive next-day start
+      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive });
       const r = await fetch(`/api/open-liabilities?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       const data = await r.json();
       return Array.isArray(data?.rows) ? data.rows : [];
@@ -367,14 +428,13 @@
     }
 
     // -----------------------
-    // Poll with reconciliation (+ local-day filter)
+    // Reconciliation & filtering (incl. local-day and server-hidden)
     // -----------------------
     function normalize(s){ return (s||'').toString().trim().toLowerCase(); }
     function makeLiabilityIndex(liabs){
       const byTag = new Set();
       const byEmail = new Set();
       const byName = new Set();
-
       for (const w of liabs){
         const tag = (w.autoTag||'').toString();
         if (tag.startsWith('ls_')) byTag.add(tag.slice(3));
@@ -389,9 +449,7 @@
     function applyReconciliation(intakeRows, liabIdx){
       const out = [];
       for (const r of intakeRows){
-        // hard local-day filter (UI): only keep rows whose local day is within pickers
-        if (!inLocalDayRange(r.signed_on)) continue;
-
+        if (!inLocalDayRange(r.signed_on)) continue; // local-day filter
         const tagHit = r.lightspeed_id && liabIdx.byTag.has(String(r.lightspeed_id));
         const emailHit = r.email && liabIdx.byEmail.has(normalize(r.email));
         const nameHit = liabIdx.byName.has(`${normalize(r.first_name)}_${normalize(r.last_name)}`);
@@ -403,6 +461,9 @@
 
     async function refreshPoll(){
       try{
+        // always re-fetch server hidden keys so multiple devices stay in sync
+        await fetchHiddenKeys();
+
         const fromISO = startOfDayISOLocal(fromDateEl.value || new Date());
         const toISOExclusive = startOfNextDayISOLocal(toDateEl.value || new Date());
 
@@ -426,6 +487,11 @@
 
     document.getElementById("refreshBtn").addEventListener("click", refreshPoll);
     document.getElementById("applyRange").addEventListener("click", refreshPoll);
+    toggleHiddenBtn.addEventListener("click", () => {
+      showHidden = !showHidden;
+      reflectHiddenToggle();
+      renderTable();
+    });
 
     // -----------------------
     // SSE subscriber (+ tick -> refresh now)
@@ -434,15 +500,11 @@
       function setSSE(s){ if (sseEl) sseEl.textContent = `SSE: ${s}`; }
       const es = new EventSource('/api/stream');
 
-      // track last version we've seen and coalesce bursts
       let lastVersion = 0;
       let tickTimer = null;
       const scheduleTickRefresh = () => {
         if (tickTimer) return;
-        tickTimer = setTimeout(() => {
-          tickTimer = null;
-          refreshPoll();
-        }, 150);
+        tickTimer = setTimeout(() => { tickTimer = null; refreshPoll(); }, 150);
       };
 
       es.addEventListener('open', () => setSSE('connected'));
@@ -469,15 +531,11 @@
           const intake_pdf_url = body.intake_pdf_url || '';
           const participants = Array.isArray(body.participants) ? body.participants : [];
 
-          // Local-day window check
           if (!inLocalDayRange(signed_on)) return;
 
           for (const p of participants) {
             const row = {
-              waiver_id,
-              signed_on,
-              intake_pdf_url,
-              lightspeed_id,
+              waiver_id, signed_on, intake_pdf_url, lightspeed_id,
               email: p.email || email,
               first_name: p.first_name || '',
               last_name:  p.last_name || '',
@@ -506,7 +564,10 @@
             const byTag = lsid && r.lightspeed_id && String(r.lightspeed_id) === lsid;
             const byEmail = r.email && emails.has(String(r.email).toLowerCase());
             const byName = nameKeys.has(`${(r.first_name||'').toLowerCase()}_${(r.last_name||'').toLowerCase()}`);
-            if (byTag || byEmail || byName) store.delete(key);
+            if (byTag || byEmail || byName) {
+              store.delete(key);
+              if (hiddenSet.has(key)) hiddenSet.delete(key);
+            }
           }
           renderTable();
         } catch {}
@@ -524,7 +585,7 @@
     function bslBandIndex(x){const n=Number(x);if(!Number.isFinite(n))return 0;if(n<231)return 0;if(n<=250)return 1;if(n<=270)return 2;if(n<=290)return 3;if(n<=310)return 4;if(n<=330)return 5;if(n<=350)return 6;return 7;}
     function codeFromWeightLbs(w){for(const r of CODE_BY_WEIGHT)if(w<=r.max)return r.code;return 0;}
     function codeFromHeightCm(cm){for(const r of CODE_BY_HEIGHT_CM)if(cm<=r.max)return r.code;return 0;}
-    const BSL_BANDS=["<231","231–250","251–270","271–290","291–310","311–330","331–350",">350"];
+    const BSL_BANDS=["<231","231–250","251–270","271–290","291–310","311–330",">350"];
     function computeDIN({weight_lb,height_in,age_years,skierType,bsl_mm,basis="auto",ageAdj="auto"}){
       const w=Number(weight_lb); if(!Number.isFinite(w))return{din:null,code:"",band:"",explain:"Missing weight"};
       const totalIn=Number(height_in); const h_cm=Number.isFinite(totalIn)?totalIn*2.54:NaN;
@@ -575,12 +636,7 @@
         ageAdj: inpAgeAdj().value
       });
       reflectBaseDin(res.din);
-      outSum().textContent = (res.din==null) ? "" :
-        `Skier code ${res.code}, ${res.explain}`;
-    }
-    async function fetchLatestLiabilityWrap(lsid, email){
-      const tag = lsid ? `ls_${lsid}` : "";
-      try { return await fetchLatestLiability({ tag, email }); } catch { return {}; }
+      outSum().textContent = (res.din==null) ? "" : `Skier code ${res.code}, ${res.explain}`;
     }
     function openDINModal(p, meta, prior){
       current = {
@@ -606,25 +662,17 @@
       inpAgeAdj().value = "auto";
       inpBasis().value = "weight";
       bslHint().textContent = "";
-
       if (prior && prior.bsl_mm) {
         inpBSL().value = prior.bsl_mm;
         bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm${prior.signed_on ? ` (${new Date(prior.signed_on).toLocaleString()})` : ""}.`;
       }
-
       reflectBaseDin(null);
       outSum().textContent = "";
-
       dinModal.classList.remove("hidden");
       dinModal.classList.add("flex");
-
       computeAndRender();
     }
-    dinClose.addEventListener("click", ()=>{
-      dinModal.classList.add("hidden");
-      dinModal.classList.remove("flex");
-      current = null;
-    });
+    dinClose.addEventListener("click", ()=>{ dinModal.classList.add("hidden"); dinModal.classList.remove("flex"); current = null; });
     ["change","keyup","input"].forEach(evt=>{
       inpBSL().addEventListener(evt, computeAndRender);
       inpType().addEventListener(evt, computeAndRender);
@@ -651,6 +699,8 @@
     // Boot
     // -----------------------
     (async ()=>{
+      showHidden = false; // default to hiding
+      reflectHiddenToggle();
       setDefaultDatesToday();
       try {
         const r = await fetch("/api/config", { headers: { 'Cache-Control':'no-cache' }});
