@@ -61,7 +61,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v3-utcfix</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v4-localday</div>
     </div>
   </main>
 
@@ -180,16 +180,14 @@
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2200); }
     function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
-    // --- Time parsing & range helpers (UTC-safe) ---
+    // --- Time parsing & range helpers (UTC-safe + local-day filtering) ---
     function parseSWDateMs(s) {
       if (!s) return NaN;
-      // If already ISO (has 'T'), use native parser
-      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return new Date(s).getTime();
-      // Smartwaiver v4 often returns "YYYY-MM-DD HH:mm:ss" (UTC)
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return new Date(s).getTime(); // ISO
       const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
       if (m) {
         const [, y, mo, d, h, mi, se] = m;
-        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
+        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se); // treat SW v4 as UTC
       }
       return new Date(s).getTime();
     }
@@ -197,6 +195,16 @@
       const ms = parseSWDateMs(s);
       if (!Number.isFinite(ms)) return s || "—";
       return new Date(ms).toLocaleString();
+    }
+    function pad(n){ return String(n).padStart(2,'0'); }
+    function localDateKeyFromMs(ms){
+      const d = new Date(ms);
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; // YYYY-MM-DD
+    }
+    function localDateKeyFromSW(s){
+      const ms = parseSWDateMs(s);
+      if (!Number.isFinite(ms)) return "";
+      return localDateKeyFromMs(ms);
     }
     function setDefaultDatesToday(){
       const t = new Date();
@@ -206,16 +214,26 @@
       if (!fromDateEl.value) fromDateEl.value = `${yyyy}-${mm}-${dd}`;
       if (!toDateEl.value)   toDateEl.value   = `${yyyy}-${mm}-${dd}`;
     }
-    function rangeBoundsMs() {
-      const f = fromDateEl.value || new Date();
-      const t = toDateEl.value   || new Date();
-      const fs = new Date(f); fs.setHours(0, 0, 0, 0);
-      const te = new Date(t); te.setHours(23, 59, 59, 999);
-      return { startMs: fs.getTime(), endMs: te.getTime() };
+    // Start of selected "from" (local) -> ISO (UTC)
+    function startOfDayISOLocal(dStr){
+      const d = new Date(dStr);
+      d.setHours(0,0,0,0);
+      return d.toISOString();
     }
-    function rangeBoundsISO() {
-      const { startMs, endMs } = rangeBoundsMs();
-      return { fromISO: new Date(startMs).toISOString(), toISO: new Date(endMs).toISOString() };
+    // Start of day after selected "to" (exclusive, local) -> ISO (UTC)
+    function startOfNextDayISOLocal(dStr){
+      const d = new Date(dStr);
+      d.setHours(0,0,0,0);
+      d.setDate(d.getDate()+1);
+      return d.toISOString();
+    }
+    // In-range test by *local calendar day* (inclusive)
+    function inLocalDayRange(signed_on){
+      const key = localDateKeyFromSW(signed_on);
+      if (!key) return false;
+      const fromKey = fromDateEl.value;
+      const toKey   = toDateEl.value;
+      return (key >= fromKey && key <= toKey);
     }
 
     // -----------------------
@@ -308,21 +326,22 @@
         });
       }
 
+      const fromKey = fromDateEl.value, toKey = toDateEl.value;
       document.getElementById("foot").textContent =
-        `Rows: ${rows.length}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
+        `Rows: ${rows.length}. Range (local days): ${fromKey} → ${toKey}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
     }
 
     // -----------------------
     // Data fetch helpers
     // -----------------------
-    async function fetchIntakes(fromISO, toISO){
-      const q = new URLSearchParams({ from: fromISO, to: toISO });
+    async function fetchIntakes(fromISO, toISOExclusive){
+      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive }); // 'to' = exclusive next-day start
       const r = await fetch(`/api/open-intakes?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       const data = await r.json();
       return Array.isArray(data?.rows) ? data.rows : [];
     }
-    async function fetchLiabilities(fromISO, toISO){
-      const q = new URLSearchParams({ from: fromISO, to: toISO });
+    async function fetchLiabilities(fromISO, toISOExclusive){
+      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive }); // 'to' = exclusive next-day start
       const r = await fetch(`/api/open-liabilities?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       const data = await r.json();
       return Array.isArray(data?.rows) ? data.rows : [];
@@ -348,7 +367,7 @@
     }
 
     // -----------------------
-    // Poll with reconciliation
+    // Poll with reconciliation (+ local-day filter)
     // -----------------------
     function normalize(s){ return (s||'').toString().trim().toLowerCase(); }
     function makeLiabilityIndex(liabs){
@@ -359,10 +378,8 @@
       for (const w of liabs){
         const tag = (w.autoTag||'').toString();
         if (tag.startsWith('ls_')) byTag.add(tag.slice(3));
-
         const em = normalize(w.email);
         if (em) byEmail.add(em);
-
         const nk = `${normalize(w.firstName)}_${normalize(w.lastName)}`.trim();
         if (nk !== '_') byName.add(nk);
       }
@@ -372,6 +389,9 @@
     function applyReconciliation(intakeRows, liabIdx){
       const out = [];
       for (const r of intakeRows){
+        // hard local-day filter (UI): only keep rows whose local day is within pickers
+        if (!inLocalDayRange(r.signed_on)) continue;
+
         const tagHit = r.lightspeed_id && liabIdx.byTag.has(String(r.lightspeed_id));
         const emailHit = r.email && liabIdx.byEmail.has(normalize(r.email));
         const nameHit = liabIdx.byName.has(`${normalize(r.first_name)}_${normalize(r.last_name)}`);
@@ -383,11 +403,12 @@
 
     async function refreshPoll(){
       try{
-        const { fromISO, toISO } = rangeBoundsISO();
+        const fromISO = startOfDayISOLocal(fromDateEl.value || new Date());
+        const toISOExclusive = startOfNextDayISOLocal(toDateEl.value || new Date());
 
         const [intakes, liabs] = await Promise.all([
-          fetchIntakes(fromISO, toISO),
-          fetchLiabilities(fromISO, toISO)
+          fetchIntakes(fromISO, toISOExclusive),
+          fetchLiabilities(fromISO, toISOExclusive)
         ]);
 
         const liabIdx = makeLiabilityIndex(liabs);
@@ -421,13 +442,12 @@
         tickTimer = setTimeout(() => {
           tickTimer = null;
           refreshPoll();
-        }, 150); // tiny debounce to coalesce multiple bumps
+        }, 150);
       };
 
       es.addEventListener('open', () => setSSE('connected'));
       es.addEventListener('ping', () => setSSE('ok'));
 
-      // react to version ticks from backend
       es.addEventListener('tick', (e) => {
         const v = parseInt((e.data || '0'), 10) || 0;
         if (v > lastVersion) {
@@ -449,10 +469,8 @@
           const intake_pdf_url = body.intake_pdf_url || '';
           const participants = Array.isArray(body.participants) ? body.participants : [];
 
-          // Respect current date window — skip if outside (using ms)
-          const tMs = parseSWDateMs(signed_on);
-          const { startMs, endMs } = rangeBoundsMs();
-          if (!Number.isFinite(tMs) || tMs < startMs || tMs > endMs) return;
+          // Local-day window check
+          if (!inLocalDayRange(signed_on)) return;
 
           for (const p of participants) {
             const row = {
@@ -480,7 +498,6 @@
         try {
           const payload = JSON.parse(e.data);
           const body = payload?.data || {};
-          // quick live removal matchers
           const lsid = (body.lightspeed_id || '').toString();
           const emails = new Set((body.participants || []).map(p => (p.email || '').toLowerCase()));
           const nameKeys = new Set((body.participants || []).map(p => `${(p.first_name||'').toLowerCase()}_${(p.last_name||'').toLowerCase()}`));
