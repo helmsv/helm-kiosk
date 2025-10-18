@@ -1,95 +1,60 @@
-// /api/sw-webhook.js
-export const config = {
-  api: {
-    bodyParser: true, // Smartwaiver sends JSON; leave true
-  },
-};
+// api/sw-webhook.js
+// Smartwaiver v4 webhook receiver -> bumps a Redis "version" so clients refresh instantly.
+// Works on Vercel (Edge not required). Supports both sw-api-key/x-api-key when we need to enrich.
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ ok: false, error: "Method not allowed" });
-  }
+const SW_BASE = (process.env.SW_BASE_URL || 'https://api.smartwaiver.com').replace(/\/+$/, '');
+const SW_V4 = `${SW_BASE}/v4`;
 
-  try {
-    // ---- Robust env resolution (new names first, legacy fallbacks) ----
-    const INTAKE_WAIVER_ID =
-      process.env.INTAKE_WAIVER_ID ||
-      process.env.INTAKE_TEMPLATE_ID ||   // legacy fallback
-      process.env.TEMPLATE_ID ||          // very old single-template fallback
-      "";
+// Upstash Redis REST (required): UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+const RURL  = process.env.UPSTASH_REDIS_REST_URL;
+const RTOK  = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-    const LIABILITY_WAIVER_ID =
-      process.env.LIABILITY_WAIVER_ID ||
-      process.env.LIABILITY_TEMPLATE_ID || // legacy fallback
-      "";
+// Optional: if you also want to include a tiny payload (latest waiverId/type)
+// it stores a few fields in Redis as plaintext JSON.
+const LAST_EVENT_KEY = 'sw:last_event';
+const VERSION_KEY    = 'sw:version';
 
-    if (!INTAKE_WAIVER_ID && !LIABILITY_WAIVER_ID) {
-      // Don’t 500 — just surface clearly so you see it in logs
-      console.warn("[sw-webhook] Missing INTAKE_WAIVER_ID / LIABILITY_WAIVER_ID");
-    }
-
-    // ---- Parse webhook payload (be defensive) ----
-    const body = (typeof req.body === "string")
-      ? safeParse(req.body)
-      : (req.body || {});
-    // Shapes we’ve seen:
-    // { templateId, waiverId, createdOn, ... }  OR  { waiver: { templateId, waiverId, ... }, ... }
-    const templateId =
-      body.templateId ||
-      body.template_id ||
-      body?.waiver?.templateId ||
-      body?.waiver?.template_id ||
-      "";
-    const waiverId =
-      body.waiverId ||
-      body.waiver_id ||
-      body?.waiver?.waiverId ||
-      body?.waiver?.waiver_id ||
-      "";
-
-    // Classify event
-    const isIntake = !!INTAKE_WAIVER_ID && templateId === INTAKE_WAIVER_ID;
-    const isLiability = !!LIABILITY_WAIVER_ID && templateId === LIABILITY_WAIVER_ID;
-
-    if (!isIntake && !isLiability) {
-      // Not a template we care about; don’t error
-      return res.status(200).json({ ok: true, ignored: true, reason: "unmatched templateId", templateId });
-    }
-
-    // ---- Build a minimal envelope to hand off to your existing publisher logic ----
-    const eventType = isIntake ? "intake" : "liability";
-    const envelope = {
-      type: eventType,
-      data: {
-        templateId,
-        waiver_id: waiverId,
-        // pass-through some timestamps/fields if provided
-        created_on: body.createdOn || body.created_on || body?.waiver?.createdOn || null,
-        signed_on: body.signedOn || body.signed_on || body?.waiver?.signedOn || null,
-        email: body.email || body?.waiver?.email || null,
-        // Raw body included for downstream enrichment if you already do a follow-up fetch
-        raw: body
-      }
-    };
-
-    // -------------------------------------------------------------------
-    // If you already publish to Redis/SSE here, KEEP those lines.
-    // For example (illustrative only — keep your existing code/keys):
-    //
-    // await publishToRedis("sse:events", JSON.stringify(envelope));
-    //
-    // -------------------------------------------------------------------
-
-    // Always 200 so Smartwaiver doesn’t retry excessively
-    return res.status(200).json({ ok: true, handled: eventType, waiverId, templateId });
-  } catch (e) {
-    console.error("[sw-webhook] error:", e);
-    // Return 200 to avoid webhook retry storms; include flag for your logs
-    return res.status(200).json({ ok: false, error: "webhook handler threw", soft: true });
-  }
+function ok(res, body = 'ok') {
+  res.setHeader('Content-Type', 'text/plain');
+  return res.status(200).send(body);
 }
 
-// Safe JSON.parse
-function safeParse(s) {
-  try { return JSON.parse(s); } catch { return {}; }
+async function redisCmd(cmd, ...args) {
+  if (!RURL || !RTOK) return null;
+  const url = `${RURL}/${cmd}/${args.map(encodeURIComponent).join('/')}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${RTOK}` }, cache: 'no-store' });
+  if (!r.ok) throw new Error(`Redis ${cmd} ${r.status}`);
+  return r.json().catch(() => ({}));
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+
+  try {
+    // Webhook body (Smartwaiver v4 sends JSON including waiverId & templateId)
+    const bodyText = req.body && typeof req.body === 'string' ? req.body : null;
+    const json = bodyText ? JSON.parse(bodyText) : (typeof req.body === 'object' ? req.body : await req.json().catch(() => ({})));
+
+    // We don’t block on enrichment — the goal is to be FAST
+    const waiverId    = json?.waiverId || json?.waiver?.waiverId || json?.id || '';
+    const templateId  = json?.templateId || json?.waiver?.templateId || '';
+    const eventType   = (json?.type || json?.event || 'waiver').toString();
+
+    // Store a tiny “last event” crumb (optional, helps with debugging)
+    if (RURL && RTOK) {
+      const payload = JSON.stringify({
+        ts: new Date().toISOString(),
+        eventType,
+        waiverId,
+        templateId,
+      });
+      await redisCmd('SET', LAST_EVENT_KEY, payload);
+      await redisCmd('INCR', VERSION_KEY); // <<< bump version so SSE tick fires
+    }
+
+    return ok(res);
+  } catch (e) {
+    console.error('sw-webhook error', e);
+    return res.status(200).send('ok'); // Always 200 so Smartwaiver doesn’t retry storm
+  }
 }
