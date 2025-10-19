@@ -17,7 +17,6 @@ async function swGetJSON(path, key){
   }
   return r.json();
 }
-
 function* deepStrings(o, maxDepth=7){
   if (!o || typeof o !== 'object') return;
   const stack = [[o,0]];
@@ -25,7 +24,7 @@ function* deepStrings(o, maxDepth=7){
     const [cur,d] = stack.pop();
     if (d>maxDepth) continue;
     if (Array.isArray(cur)){ for (const v of cur) stack.push([v,d+1]); continue; }
-    for (const [k,v] of Object.entries(cur)){
+    for (const [,v] of Object.entries(cur)){
       if (typeof v === 'string') yield v;
       if (v && typeof v === 'object') stack.push([v,d+1]);
     }
@@ -49,14 +48,14 @@ export default async function handler(req, res){
     {
       const url = `${API_BASE}/waivers/${encodeURIComponent(waiverId)}/pdf`;
       let r = await swFetch(url, key, 'application/pdf');
-      const ct = r.headers.get('content-type') || '';
-      if (r.ok && ct.toLowerCase().includes('application/pdf')) {
+      const ct = (r.headers.get('content-type') || '').toLowerCase();
+      if (r.ok && ct.includes('application/pdf')) {
         const buf = Buffer.from(await r.arrayBuffer());
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="waiver-${waiverId}.pdf"`);
         return res.status(200).send(buf);
       }
-      // If the endpoint exists but returns JSON "Route not found", fall through to try ?pdf=true
+      // If we got JSON "route not found", fall back to ?pdf=true discovery
       if (!r.ok) {
         const body = await r.text().catch(()=> '');
         if (!ct.includes('application/json') || !/route not found/i.test(body)) {
@@ -65,21 +64,20 @@ export default async function handler(req, res){
       }
     }
 
-    // 2) Fallback: pull waiver with ?pdf=true and look for a pdf URL
+    // 2) Fallback: pull waiver and discover a PDF URL
     let pdfUrl = null;
     try {
       const detail = await swGetJSON(`/waivers/${encodeURIComponent(waiverId)}?pdf=true`, key);
       pdfUrl = detail?.waiver?.pdf || detail?.pdf || findPdfUrlDeep(detail);
-    } catch {
-      // ignore, we'll try a bare waiver fetch next
-    }
+    } catch { /* ignore, try bare */ }
+
     if (!pdfUrl) {
       const bare = await swGetJSON(`/waivers/${encodeURIComponent(waiverId)}`, key);
       pdfUrl = bare?.waiver?.pdf || bare?.pdf || findPdfUrlDeep(bare);
     }
     if (!pdfUrl) return res.status(404).send('PDF URL not found');
 
-    // 3) Stream the discovered PDF URL
+    // 3) Stream the discovered URL
     let r2 = await fetch(pdfUrl, { cache: 'no-store' });
     if (!r2.ok) r2 = await fetch(pdfUrl, { headers: { 'sw-api-key': key }, cache: 'no-store' });
     if (!r2.ok) {
