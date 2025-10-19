@@ -470,8 +470,11 @@
         // always re-fetch server hidden keys so multiple devices stay in sync
         await fetchHiddenKeys();
 
-        const fromISO = startOfDayISOLocal(fromDateEl.value || new Date());
-        const toISOExclusive = startOfNextDayISOLocal(toDateEl.value || new Date());
+        // const fromISO = startOfDayISOLocal(fromDateEl.value || new Date());
+        // const toISOExclusive = startOfNextDayISOLocal(toDateEl.value || new Date());
+
+        const fromISO = (fromDateEl.value || '').slice(0,10); // YYYY-MM-DD
+        const toISO   = (toDateEl.value   || '').slice(0,10); // YYYY-MM-DD
 
         const [intakes, liabs] = await Promise.all([
           fetchIntakes(fromISO, toISOExclusive),
