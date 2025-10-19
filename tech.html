@@ -244,12 +244,12 @@
     const hiddenSet = new Set(); // populated from server
     async function fetchHiddenKeys(){
       try{
-        const r = await fetch('/api/hidden-list', { headers: { 'Cache-Control':'no-cache' }});
+        const r = await fetch('/api/hidden', { headers: { 'Cache-Control':'no-cache' }});
         const data = await r.json();
         hiddenSet.clear();
         (data?.keys || []).forEach(k => hiddenSet.add(String(k)));
       }catch(e){
-        console.error('hidden-list', e);
+        console.error('hidden', e);
       }
     }
     async function serverToggleHide(key, hide){
