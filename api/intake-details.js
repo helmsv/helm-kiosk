@@ -1,22 +1,24 @@
-// Next.js API route: /api/intake-details
-// Accepts waiverId | waiverID | id | swid and returns normalized participant data.
-// More robust parsing for Height, Weight, Skier Type.
+// pages/api/intake-details.js
+// Robust Smartwaiver intake normalizer for DIN calculation.
+// Explicitly supports labels: "Age", "Weight", "Height", "Skier Type"
 
 const SW_BASE = "https://api.smartwaiver.com/v4";
 
 async function swGet(path, apiKey) {
   const r = await fetch(`${SW_BASE}${path}`, {
-    headers: { "sw-api-key": apiKey, "accept": "application/json" },
-    redirect: "follow"
+    headers: { "sw-api-key": apiKey, accept: "application/json" },
+    redirect: "follow",
   });
-  // Return JSON or a safe fallback
   try { return await r.json(); } catch { return {}; }
 }
 
-function toInt(x) {
-  const n = parseInt(String(x).replace(/[^\d\-]/g, ""), 10);
+const toInt = (x) => {
+  if (x == null) return null;
+  const m = String(x).match(/-?\d+/);
+  if (!m) return null;
+  const n = parseInt(m[0], 10);
   return Number.isFinite(n) ? n : null;
-}
+};
 
 function inchesFromFeetInches(ft, inch) {
   const f = toInt(ft), i = toInt(inch);
@@ -26,35 +28,33 @@ function inchesFromFeetInches(ft, inch) {
 }
 
 function inchesFromAnyHeight(val) {
-  if (!val) return null;
-  const s = String(val).toLowerCase().trim();
+  if (!val && val !== 0) return null;
+  const s = String(val).trim().toLowerCase();
 
-  // Patterns like 5'11", 5 ft 11 in, 5-11, 5.11 (not ideal but common)
+  // 5'11", 5 ft 11 in, 5-11
   let m = s.match(/(\d+)\s*(?:'|ft|feet|-)\s*(\d+)?\s*(?:"|in|inches)?/i);
   if (m) return inchesFromFeetInches(m[1], m[2] || 0);
 
-  // "71 in" or "71 inches"
-  m = s.match(/(\d+)\s*(?:in|inches)\b/);
-  if (m) return toInt(m[1]);
+  // 71 in / inches
+  m = s.match(/(\d+(?:\.\d+)?)\s*(?:in|inches)\b/);
+  if (m) return Math.round(parseFloat(m[1]));
 
-  // "5.9 ft" etc.
+  // 5.9 ft
   m = s.match(/(\d+(?:\.\d+)?)\s*(?:ft|feet)\b/);
   if (m) return Math.round(parseFloat(m[1]) * 12);
 
-  // Plain number: assume inches if 45–90, assume feet if 4–7.x
+  // Bare number: assume inches if 45–90; feet if 4–7.5
   const num = parseFloat(s);
   if (Number.isFinite(num)) {
-    if (num >= 45 && num <= 90) return Math.round(num); // inches
-    if (num >= 4 && num <= 7.5) return Math.round(num * 12); // feet
+    if (num >= 45 && num <= 90) return Math.round(num);
+    if (num >= 4 && num <= 7.5) return Math.round(num * 12);
   }
   return null;
 }
 
 function poundsFromAnyWeight(val) {
-  if (!val) return null;
-  const s = String(val).toLowerCase();
-  // "180 lb", "180lbs", "180 pounds"
-  const m = s.match(/(\d+(?:\.\d+)?)/);
+  if (!val && val !== 0) return null;
+  const m = String(val).toLowerCase().match(/(\d+(?:\.\d+)?)/);
   if (!m) return null;
   const n = Math.round(parseFloat(m[1]));
   return Number.isFinite(n) ? n : null;
@@ -63,92 +63,138 @@ function poundsFromAnyWeight(val) {
 function normalizeSkierType(val) {
   if (!val) return "";
   const s = String(val).trim().toUpperCase();
-  // Common inputs: "I", "II", "III", "TYPE I", "1", "2", "3", radio/checkbox text, etc.
-  if (/III\b|TYPE\s*III\b|\b3\b/.test(s)) return "III";
-  if (/II\b|TYPE\s*II\b|\b2\b/.test(s)) return "II";
-  if (/I\b(?!I)|TYPE\s*I\b|\b1\b/.test(s)) return "I";
-  return s.replace(/^TYPE\s*/, ""); // fallback
+
+  // Map common phrases to I/II/III
+  if (/(TYPE\s*)?III\b|(^|\b)3\b|AGGRESSIVE/.test(s)) return "III";
+  if (/(TYPE\s*)?II\b|(^|\b)2\b|AVERAGE|MODERATE/.test(s)) return "II";
+  if (/(TYPE\s*)?I(\b|$)|(^|\b)1\b|CAUTIOUS/.test(s)) return "I";
+
+  // Fallback (e.g., "TYPE I – Cautious")
+  return s.replace(/^TYPE\s*/, "");
 }
 
-// Build a searchable list of {label, value} from Smartwaiver participant structures
-function collectLabelValuePairs(p) {
-  const out = [];
+function computeAgeFromDob(dobIso) {
+  if (!dobIso) return null;
+  const dob = new Date(dobIso);
+  if (isNaN(dob)) return null;
+  const now = new Date();
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const m = now.getUTCMonth() - dob.getUTCMonth();
+  if (m < 0 || (m === 0 && now.getUTCDate() < dob.getUTCDate())) age--;
+  return age >= 0 && age < 130 ? age : null;
+}
 
+// Make a flat list of {label, value} from any node
+function collectLabelValuePairs(node) {
+  const out = [];
   const push = (label, value) => {
     if (label == null && value == null) return;
     out.push({ label: String(label || "").trim(), value });
   };
-
-  const dig = (node) => {
-    if (!node) return;
-    if (Array.isArray(node)) node.forEach(dig);
-    else if (typeof node === "object") {
-      const label = node.label ?? node.title ?? node.text ?? node.name ?? node.l ?? node.t ?? node.n;
-      const value = node.value ?? node.v ?? node.answer ?? node.response ?? node.defaultValue ?? node.selected ?? node.s;
+  const dig = (n) => {
+    if (!n) return;
+    if (Array.isArray(n)) { n.forEach(dig); return; }
+    if (typeof n === "object") {
+      const label = n.label ?? n.title ?? n.text ?? n.name ?? n.l ?? n.t ?? n.n;
+      const value = n.value ?? n.v ?? n.answer ?? n.response ?? n.defaultValue ?? n.selected ?? n.s;
       if (label != null || value != null) push(label, value);
-      // Recurse into common containers
-      dig(node.values);
-      dig(node.elements);
-      dig(node.fields);
-      dig(node.customParticipantFields);
+      dig(n.values);
+      dig(n.elements);
+      dig(n.fields);
+      dig(n.customParticipantFields);
+      dig(n.children);
     }
   };
-
-  dig(p);
+  dig(node);
   return out;
 }
 
-function findByLabel(pairs, ...needles) {
-  const N = needles.map(n => String(n).toLowerCase());
-  return pairs.find(({ label }) => {
+function findValueByLabel(pairs, ...needles) {
+  const N = needles.map((x) => String(x).toLowerCase());
+  for (const { label, value } of pairs) {
     const L = String(label || "").toLowerCase();
-    return N.some(n => L.includes(n));
-  })?.value ?? null;
+    if (N.some((n) => L.includes(n))) return value;
+  }
+  return null;
 }
 
-function mapParticipant(p, index = 0) {
+function mapParticipant(p, index, waiverPairs) {
   const pairs = collectLabelValuePairs(p);
 
-  const first = findByLabel(pairs, "first name", "firstname", "participant first");
-  const last  = findByLabel(pairs, "last name", "lastname", "participant last");
-  const dob   = findByLabel(pairs, "birth", "date of birth", "dob");
+  // Basic names/dob (fallback to waiver-level if missing)
+  const first =
+    p.firstName ||
+    findValueByLabel(pairs, "first name", "firstname") ||
+    findValueByLabel(waiverPairs, "first name", "firstname") ||
+    "";
+  const last =
+    p.lastName ||
+    findValueByLabel(pairs, "last name", "lastname") ||
+    findValueByLabel(waiverPairs, "last name", "lastname") ||
+    "";
+  const dob =
+    p.dateOfBirth ||
+    findValueByLabel(pairs, "date of birth", "dob", "birth") ||
+    findValueByLabel(waiverPairs, "date of birth", "dob", "birth") ||
+    "";
 
-  // Height
-  let height_in = null;
-  const hMixed  = findByLabel(pairs, "height", "height (ft)", "height (feet)", "height (in)", "inches", "ft");
-  const hFt     = findByLabel(pairs, "height (ft)", "height (feet)", "ft (height)");
-  const hIn     = findByLabel(pairs, "height (in)", "height (inches)", "in (height)");
-  if (hFt || hIn) height_in = inchesFromFeetInches(hFt, hIn);
-  if (height_in == null) height_in = inchesFromAnyHeight(hMixed);
+  // Age — EXACT label “Age”, fallback to DOB-derived
+  let age =
+    toInt(findValueByLabel(pairs, "age")) ??
+    toInt(findValueByLabel(waiverPairs, "age")) ??
+    computeAgeFromDob(dob);
 
-  // Weight
-  let weight_lb = null;
-  const wAny = findByLabel(pairs, "weight", "lbs", "pounds", "body weight");
-  weight_lb = poundsFromAnyWeight(wAny);
+  // Height — EXACT label “Height” (but also support common variants)
+  let heightRaw =
+    findValueByLabel(pairs, "height") ??
+    findValueByLabel(waiverPairs, "height");
+  const hFt = findValueByLabel(pairs, "height (ft)", "height feet");
+  const hIn = findValueByLabel(pairs, "height (in)", "height inches");
+  let height_in =
+    inchesFromFeetInches(hFt, hIn) ??
+    inchesFromAnyHeight(heightRaw);
 
-  // Skier Type
-  let skier_type = "";
-  const stAny = findByLabel(pairs, "skier type", "skier ability", "type i", "type ii", "type iii", "type");
-  skier_type = normalizeSkierType(stAny);
+  // Weight — EXACT label “Weight”
+  let weightRaw =
+    findValueByLabel(pairs, "weight") ??
+    findValueByLabel(waiverPairs, "weight");
+  let weight_lb = poundsFromAnyWeight(weightRaw);
+
+  // Skier Type — EXACT label “Skier Type”
+  let skierRaw =
+    findValueByLabel(pairs, "skier type") ??
+    findValueByLabel(waiverPairs, "skier type");
+  let skier_type = normalizeSkierType(skierRaw);
 
   return {
     participant_index: index,
-    first_name: p.firstName || first || "",
-    last_name:  p.lastName  || last  || "",
-    date_of_birth: p.dateOfBirth || dob || "",
-    height_in,
-    weight_lb,
-    skier_type
+    first_name: first,
+    last_name: last,
+    date_of_birth: dob || "",
+    age: age ?? null,
+    height_in: height_in ?? null,
+    weight_lb: weight_lb ?? null,
+    skier_type: skier_type || "",
+    // (Optional) raw hints for debugging – harmless to the UI:
+    _raw: {
+      age: age ?? null,
+      height: heightRaw ?? null,
+      weight: weightRaw ?? null,
+      skierType: skierRaw ?? null,
+    },
   };
 }
 
 export default async function handler(req, res) {
   const apiKey = process.env.SW_API_KEY || "";
   const waiverId =
-    (req.query.waiverId || req.query.waiverID || req.query.id || req.query.swid || "").toString().trim();
+    (req.query.waiverId ||
+      req.query.waiverID ||
+      req.query.id ||
+      req.query.swid ||
+      "").toString().trim();
 
   if (!apiKey) {
-    // Keep status 200 so the front-end doesn’t throw
     return res.status(200).json({ error: "Missing SW_API_KEY", participants: [] });
   }
   if (!waiverId) {
@@ -159,14 +205,20 @@ export default async function handler(req, res) {
     const data = await swGet(`/waivers/${encodeURIComponent(waiverId)}`, apiKey);
     const w = data?.waiver || data || {};
 
+    // Build waiver-level pairs for fallback lookups of Age/Height/Weight/Skier Type
+    const waiverPairs = collectLabelValuePairs(w);
+
+    const participants = Array.isArray(w.participants)
+      ? w.participants.map((p, i) => mapParticipant(p, p?.participant_index ?? i, waiverPairs))
+      : [
+          // Single-participant waivers sometimes flatten fields on the waiver object
+          mapParticipant({}, 0, waiverPairs),
+        ];
+
     const out = {
       waiver_id: w.waiverId || waiverId,
-      first_name: w.firstName || "",
-      last_name:  w.lastName  || "",
       email: w.email || w.contactEmail || "",
-      participants: Array.isArray(w.participants)
-        ? w.participants.map((p, i) => mapParticipant(p, p?.participant_index ?? i))
-        : []
+      participants,
     };
 
     return res.status(200).json(out);
