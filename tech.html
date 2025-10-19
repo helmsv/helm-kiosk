@@ -52,7 +52,7 @@
               <th class="py-2 pr-4">Age</th>
               <th class="py-2 pr-4">Wt (lb)</th>
               <th class="py-2 pr-4">Ht (cm)</th>
-              <th class="py-2 pr-4">Skier</th>
+              <th class="py-2 pr-4">Skier Type</th>
               <th class="py-2 pr-4">LS ID</th>
               <th class="py-2 pr-4">Intake PDF</th>
               <th class="py-2 pr-4">Actions</th>
@@ -63,7 +63,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v7</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v8</div>
     </div>
   </main>
 
@@ -189,7 +189,7 @@
       const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
       if (m) {
         const [, y, mo, d, h, mi, se] = m;
-        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se); // treat SW v4 as UTC
+        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se); // Smartwaiver v4 "YYYY-MM-DD HH:mm:ss" -> UTC
       }
       return new Date(s).getTime();
     }
@@ -225,6 +225,17 @@
     }
     function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
+    // --- Skier type sanitizer (only I / II / III allowed) ---
+    function normalizeSkierType(v){
+      const t = String(v || '').trim().toUpperCase().replace(/\s+/g,'');
+      if (t === 'I' || t === 'II' || t === 'III') return t;
+      if (t === 'TYPEI') return 'I';
+      if (t === 'TYPEII') return 'II';
+      if (t === 'TYPEIII') return 'III';
+      return ''; // anything else (e.g., "YES") becomes blank
+    }
+    function displaySkier(v){ return normalizeSkierType(v) || '—'; }
+
     // -----------------------
     // Local row store + keys
     // -----------------------
@@ -247,21 +258,37 @@
       }
     }
     async function serverToggleHide(key, hide){
-      try{
-        const r = await fetch('/api/hidden-toggle', {
+      // optimistic UI for snappy feel
+      const had = hiddenSet.has(key);
+      if (hide) hiddenSet.add(key); else hiddenSet.delete(key);
+      renderTable();
+
+      async function tryRoute(url){
+        const r = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({ key, hide })
+          // send both boolean and string so either server implementation is happy
+          body: JSON.stringify({ key, hide, value: hide ? '1' : '0' })
         });
-        if (!r.ok) {
-          const txt = await r.text().catch(()=> '');
-          throw new Error(`HTTP ${r.status} ${txt}`);
+        const txt = await r.text();
+        let json; try { json = JSON.parse(txt); } catch {}
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${txt.slice(0,200)}`);
+        if (json && json.ok === false) throw new Error(json.error || 'toggle failed');
+        return json || { ok:true };
+      }
+
+      try{
+        try {
+          await tryRoute('/api/hidden-toggle');           // primary
+        } catch {
+          await tryRoute('/api/hidden');                  // fallback (same payload)
         }
-        const data = await r.json().catch(()=> ({}));
-        if (!data?.ok) throw new Error(`Bad response ${JSON.stringify(data)}`);
-        await fetchHiddenKeys(); // keep all tabs/devices in sync
+        await fetchHiddenKeys();                          // re-sync all keys
         return true;
       }catch(e){
+        // revert optimistic change on hard failure
+        if (had) hiddenSet.add(key); else hiddenSet.delete(key);
+        renderTable();
         console.error('hidden-toggle', e);
         showToast(`Hide toggle failed: ${e.message || e}`);
         return false;
@@ -303,7 +330,11 @@
         tr.className = "border-b";
         if (hidden && showHidden) tr.classList.add("opacity-50");
 
-        const pdfHref = r.waiver_id ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}` : (r.intake_pdf_url || "");
+        // FIX: prefer Smartwaiver-provided PDF URL; fallback to viewer by waiverId
+        const pdfHref = (r.intake_pdf_url && /^https?:\/\//.test(r.intake_pdf_url))
+          ? r.intake_pdf_url
+          : (r.waiver_id ? `https://www.smartwaiver.com/sw/wa/${encodeURIComponent(r.waiver_id)}?pdf=1` : "");
+
         const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>` : "—";
         const hiddenPill = hidden && showHidden ? `<span class="pill">Hidden</span>` : "";
 
@@ -314,7 +345,7 @@
           <td class="py-2 pr-4">${r.age ?? "—"}</td>
           <td class="py-2 pr-4">${r.weight_lb ?? "—"}</td>
           <td class="py-2 pr-4">${toCm(r.height_in) || "—"}</td>
-          <td class="py-2 pr-4">${r.skier_type || "—"}</td>
+          <td class="py-2 pr-4">${displaySkier(r.skier_type)}</td>
           <td class="py-2 pr-4">${r.lightspeed_id || "—"}</td>
           <td class="py-2 pr-4">${pdfCell}</td>
           <td class="py-2 pr-4">
@@ -371,9 +402,11 @@
                 if (Array.isArray(details.participants) && details.participants.length){
                   p = details.participants.find(pp => Number(pp.participant_index) === pindex) || details.participants[pindex] || details.participants[0];
                 }
-                const participant = p || { first_name:first, last_name:last, email, age:r.age, weight_lb:r.weight_lb, height_in:r.height_in, skier_type:r.skier_type };
+                // sanitize skier type before display/use
+                const st = normalizeSkierType((p && p.skier_type) || r.skier_type);
+                const participant = { first_name:first, last_name:last, email, age:r.age, weight_lb:r.weight_lb, height_in:r.height_in, skier_type: st };
                 const prior = await fetchLatestLiability({ tag: lsid ? `ls_${lsid}` : "", email });
-                openDINModal(participant, { email, lightspeed_id: lsid, first_name:first, last_name:last }, prior);
+                openDINModal(p || participant, { email, lightspeed_id: lsid, first_name:first, last_name:last }, prior);
               } catch (e) {
                 console.error(e);
                 showToast("Could not load intake or prior liability.");
@@ -384,11 +417,7 @@
             if (action === "toggle-hide") {
               const k = btn.getAttribute("data-key");
               const willHide = !hiddenSet.has(k);
-              const ok = await serverToggleHide(k, willHide);
-              if (ok) {
-                showToast(willHide ? "Row hidden" : "Row unhidden");
-                renderTable();
-              }
+              await serverToggleHide(k, willHide);
               return;
             }
           });
@@ -496,7 +525,6 @@
         }
         renderTable();
 
-        // surface partial errors without blocking UI
         const foot = document.getElementById('foot');
         const parts = [];
         if (intErr)  parts.push(`intakes error: ${intErr.message || intErr}`);
@@ -569,7 +597,7 @@
               age: p.age ?? null,
               weight_lb: p.weight_lb ?? null,
               height_in: p.height_in ?? null,
-              skier_type: p.skier_type || '',
+              skier_type: normalizeSkierType(p.skier_type || ''),
               participant_index: p.participant_index ?? 0
             };
             upsertRow(row);
@@ -604,7 +632,7 @@
     })();
 
     // -----------------------
-    // DIN logic (unchanged math)
+    // DIN logic
     // -----------------------
     const CODE_BY_WEIGHT=[{max:29,code:0},{max:38,code:1},{max:47,code:2},{max:56,code:3},{max:66,code:4},{max:78,code:5},{max:91,code:6},{max:107,code:7},{max:125,code:8},{max:147,code:9},{max:174,code:10},{max:209,code:11},{max:999,code:12}];
     const CODE_BY_HEIGHT_CM=[{max:148,code:7},{max:157,code:8},{max:166,code:9},{max:178,code:10},{max:194,code:11},{max:999,code:12}];
@@ -622,13 +650,13 @@
       let code=baseBeforeAdj;
       if(ageAdj==="auto"){ if(Number.isFinite(age_years)&&(age_years<=9||age_years>=50))code-=1; }
       else if(ageAdj==="minus1")code-=1;
-      const type=(skierType||"").toUpperCase();
+      const type=normalizeSkierType(skierType)||"II";
       if(type==="II")code+=1; else if(type==="III")code+=2;
       const baseCode=Math.max(0,Math.min(15,code));
       const bandIdx=bslBandIndex(Number(bsl_mm));
       const dinRaw=DIN_TABLE[baseCode][bandIdx];
       const codeLetter=String.fromCharCode(65+baseCode);
-      const explain=`Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type||"II"}, BSL band ${BSL_BANDS[bandIdx]}.`;
+      const explain=`Base code (W:${String.fromCharCode(65+codeW)} / H:${String.fromCharCode(65+codeH)} → ${String.fromCharCode(65+baseBeforeAdj)}), age adj: ${ageAdj}, type: ${type}, BSL band ${BSL_BANDS[bandIdx]}.`;
       return{din:dinRaw,code:codeLetter,band:BSL_BANDS[bandIdx],explain};
     }
 
@@ -665,10 +693,6 @@
       reflectBaseDin(res.din);
       outSum().textContent = (res.din==null) ? "" : `Skier code ${res.code}, ${res.explain}`;
     }
-    async function fetchLatestLiabilityWrap(lsid, email){
-      const tag = lsid ? `ls_${lsid}` : "";
-      try { return await fetchLatestLiability({ tag, email }); } catch { return {}; }
-    }
     function openDINModal(p, meta, prior){
       current = {
         email:        meta.email || p.email || "",
@@ -678,7 +702,8 @@
         age:          Number(p.age) || NaN,
         weight_lb:    Number(p.weight_lb) || NaN,
         height_in:    Number(p.height_in) || NaN,
-        skier_type:   (p.skier_type || "").toUpperCase()
+        // sanitize skier type for display and default logic
+        skier_type:   normalizeSkierType(p.skier_type || "")
       };
       document.getElementById("i_name").textContent   = [current.first_name,current.last_name].filter(Boolean).join(" ") || "—";
       document.getElementById("i_email").textContent  = current.email || "—";
@@ -686,10 +711,11 @@
       document.getElementById("i_weight").textContent = Number.isFinite(current.weight_lb) ? `${current.weight_lb} lb` : "—";
       const hcm = Number.isFinite(current.height_in) ? Math.round(current.height_in * 2.54) : null;
       document.getElementById("i_height").textContent = hcm ? `${hcm} cm` : "—";
-      document.getElementById("i_skier").textContent  = current.skier_type || "—";
+      document.getElementById("i_skier").textContent  = displaySkier(current.skier_type);
 
+      // Inputs: default to sanitized type or "II"
       inpBSL().value = "";
-      inpType().value = (current.skier_type==="I"||current.skier_type==="II"||current.skier_type==="III") ? current.skier_type : "II";
+      inpType().value = current.skier_type || "II";
       inpAgeAdj().value = "auto";
       inpBasis().value = "weight";
       bslHint().textContent = "";
