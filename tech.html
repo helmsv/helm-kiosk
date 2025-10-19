@@ -63,7 +63,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v6-redis-hide</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v7</div>
     </div>
   </main>
 
@@ -216,17 +216,11 @@
       if (!fromDateEl.value) fromDateEl.value = `${yyyy}-${mm}-${dd}`;
       if (!toDateEl.value)   toDateEl.value   = `${yyyy}-${mm}-${dd}`;
     }
-    function startOfDayISOLocal(dStr){
-      const d = new Date(dStr); d.setHours(0,0,0,0); return d.toISOString();
-    }
-    function startOfNextDayISOLocal(dStr){
-      const d = new Date(dStr); d.setHours(0,0,0,0); d.setDate(d.getDate()+1); return d.toISOString();
-    }
     function inLocalDayRange(signed_on){
       const key = localDateKeyFromSW(signed_on);
       if (!key) return false;
-      const fromKey = fromDateEl.value;
-      const toKey   = toDateEl.value;
+      const fromKey = (fromDateEl.value || '').slice(0,10);
+      const toKey   = (toDateEl.value   || '').slice(0,10);
       return (key >= fromKey && key <= toKey);
     }
     function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
@@ -253,27 +247,26 @@
       }
     }
     async function serverToggleHide(key, hide){
-  try{
-    const r = await fetch('/api/hidden-toggle', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ key, hide })
-    });
-    if (!r.ok) {
-      const txt = await r.text().catch(()=> '');
-      throw new Error(`HTTP ${r.status} ${txt}`);
+      try{
+        const r = await fetch('/api/hidden-toggle', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ key, hide })
+        });
+        if (!r.ok) {
+          const txt = await r.text().catch(()=> '');
+          throw new Error(`HTTP ${r.status} ${txt}`);
+        }
+        const data = await r.json().catch(()=> ({}));
+        if (!data?.ok) throw new Error(`Bad response ${JSON.stringify(data)}`);
+        await fetchHiddenKeys(); // keep all tabs/devices in sync
+        return true;
+      }catch(e){
+        console.error('hidden-toggle', e);
+        showToast(`Hide toggle failed: ${e.message || e}`);
+        return false;
+      }
     }
-    const data = await r.json().catch(()=> ({}));
-    if (!data?.ok) throw new Error(`Bad response ${JSON.stringify(data)}`);
-    // after a successful toggle, re-pull the hidden set so *all* tabs/devices stay in sync
-    await fetchHiddenKeys();
-    return true;
-  }catch(e){
-    console.error('hidden-toggle', e);
-    showToast(`Hide toggle failed: ${e.message || e}`);
-    return false;
-  }
-}
 
     // Global "show hidden" UI state (defaults to HIDE on page load)
     let showHidden = false;
@@ -281,7 +274,20 @@
       toggleHiddenBtn.textContent = showHidden ? 'Hide Hidden' : 'Show Hidden';
     }
 
+    // ---------- Helper: visible errors for API calls ----------
+    async function fetchJSONOrThrow(url) {
+      const r = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
+      const text = await r.text();
+      let json;
+      try { json = JSON.parse(text); } catch { json = undefined; }
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${text.slice(0, 200)}`);
+      if (json && json.error) throw new Error(json.error);
+      return json ?? {};
+    }
+
+    // -----------------------
     // Render current store (sorted newest first)
+    // -----------------------
     function renderTable(){
       const rowsAll = Array.from(store.values())
         .sort((a,b)=> parseSWDateMs(b.signed_on) - parseSWDateMs(a.signed_on));
@@ -376,16 +382,15 @@
             }
 
             if (action === "toggle-hide") {
-            const k = btn.getAttribute("data-key");
-            const willHide = !hiddenSet.has(k);
-            const ok = await serverToggleHide(k, willHide);
-            if (ok) {
-              // hiddenSet refreshed in serverToggleHide(); just re-render
-              showToast(willHide ? "Row hidden" : "Row unhidden");
-              renderTable();
+              const k = btn.getAttribute("data-key");
+              const willHide = !hiddenSet.has(k);
+              const ok = await serverToggleHide(k, willHide);
+              if (ok) {
+                showToast(willHide ? "Row hidden" : "Row unhidden");
+                renderTable();
+              }
+              return;
             }
-            return;
-          }
           });
         });
       }
@@ -393,34 +398,31 @@
       const total = rowsAll.length;
       const hiddenCount = rowsAll.filter(r => hiddenSet.has(rowKey(r.waiver_id, r.participant_index))).length;
       const suppressed = total - visible.length;
-      const fromKey = fromDateEl.value, toKey = toDateEl.value;
+      const fromKey = (fromDateEl.value || '').slice(0,10), toKey = (toDateEl.value || '').slice(0,10);
       document.getElementById("foot").textContent =
         `Rows: ${visible.length} (hidden total: ${hiddenCount}${showHidden ? ' shown' : `, suppressed: ${suppressed}`}). Range (local days): ${fromKey} → ${toKey}. Mode: SSE + ${Math.round(REFRESH_MS/1000)}s poll`;
     }
 
     // -----------------------
-    // Data fetch helpers
+    // Data fetch helpers (hardened)
     // -----------------------
-    async function fetchIntakes(fromISO, toISOExclusive){
-      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive });
-      const r = await fetch(`/api/open-intakes?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
-      const data = await r.json();
+    async function fetchIntakes(fromVal, toVal){
+      const q = new URLSearchParams({ from: fromVal, to: toVal });
+      const data = await fetchJSONOrThrow(`/api/open-intakes?${q.toString()}`);
       return Array.isArray(data?.rows) ? data.rows : [];
     }
-    async function fetchLiabilities(fromISO, toISOExclusive){
-      const q = new URLSearchParams({ from: fromISO, to: toISOExclusive });
-      const r = await fetch(`/api/open-liabilities?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
-      const data = await r.json();
+    async function fetchLiabilities(fromVal, toVal){
+      const q = new URLSearchParams({ from: fromVal, to: toVal });
+      const data = await fetchJSONOrThrow(`/api/open-liabilities?${q.toString()}`);
       return Array.isArray(data?.rows) ? data.rows : [];
     }
     async function fetchIntakeDetails(waiverId){
-      const r=await fetch(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`, { headers: { 'Cache-Control':'no-cache' }});
-      if(!r.ok) throw new Error(`intake-details ${r.status}`);
-      return await r.json();
+      const data = await fetchJSONOrThrow(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
+      return data;
     }
     async function fetchLatestLiability({ tag, email }){
       const q=new URLSearchParams(); if(tag) q.set("tag",tag); if(email) q.set("email",email);
-      const r=await fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
+      const r = await fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       if(!r.ok) return {};
       return await r.json();
     }
@@ -451,7 +453,6 @@
       }
       return { byTag, byEmail, byName };
     }
-
     function applyReconciliation(intakeRows, liabIdx){
       const out = [];
       for (const r of intakeRows){
@@ -465,21 +466,27 @@
       return out;
     }
 
+    // -----------------------
+    // Poll with reconciliation (robust; partial success still renders)
+    // -----------------------
     async function refreshPoll(){
       try{
-        // always re-fetch server hidden keys so multiple devices stay in sync
-        await fetchHiddenKeys();
+        await fetchHiddenKeys(); // multi-device sync
 
-        // const fromISO = startOfDayISOLocal(fromDateEl.value || new Date());
-        // const toISOExclusive = startOfNextDayISOLocal(toDateEl.value || new Date());
+        const fromKey = (fromDateEl.value || '').slice(0,10); // YYYY-MM-DD
+        const toKey   = (toDateEl.value   || '').slice(0,10); // YYYY-MM-DD
 
-        const fromISO = (fromDateEl.value || '').slice(0,10); // YYYY-MM-DD
-        const toISO   = (toDateEl.value   || '').slice(0,10); // YYYY-MM-DD
+        let intakes = [], liabs = [];
+        let intErr = null, liabErr = null;
 
-        const [intakes, liabs] = await Promise.all([
-          fetchIntakes(fromISO, toISOExclusive),
-          fetchLiabilities(fromISO, toISOExclusive)
+        await Promise.all([
+          (async () => { try { intakes = await fetchIntakes(fromKey, toKey); } catch(e){ intErr = e; } })(),
+          (async () => { try { liabs   = await fetchLiabilities(fromKey, toKey); } catch(e){ liabErr = e; } })()
         ]);
+
+        if (intErr && liabErr) {
+          throw new Error(`open-intakes: ${intErr.message || intErr} | open-liabilities: ${liabErr.message || liabErr}`);
+        }
 
         const liabIdx = makeLiabilityIndex(liabs);
 
@@ -488,9 +495,18 @@
           upsertRow(row);
         }
         renderTable();
+
+        // surface partial errors without blocking UI
+        const foot = document.getElementById('foot');
+        const parts = [];
+        if (intErr)  parts.push(`intakes error: ${intErr.message || intErr}`);
+        if (liabErr) parts.push(`liabilities error: ${liabErr.message || liabErr}`);
+        const current = foot.textContent;
+        foot.textContent = (current ? current + ' • ' : '') + (parts.length ? parts.join(' • ') : '');
+        if (parts.length) showToast(parts.join(' • '));
       }catch(e){
         console.error(e);
-        showToast("Refresh failed");
+        showToast(`Refresh failed: ${e.message || e}`);
       }
     }
 
@@ -503,7 +519,7 @@
     });
 
     // -----------------------
-    // SSE subscriber (+ tick -> refresh now)
+    // SSE subscriber (+ tick -> refresh now, JSON or number)
     // -----------------------
     (function attachSSE(){
       function setSSE(s){ if (sseEl) sseEl.textContent = `SSE: ${s}`; }
@@ -520,7 +536,9 @@
       es.addEventListener('ping', () => setSSE('ok'));
 
       es.addEventListener('tick', (e) => {
-        const v = parseInt((e.data || '0'), 10) || 0;
+        let v = 0;
+        try { const obj = JSON.parse(e.data); v = Number(obj.version) || 0; }
+        catch { v = parseInt((e.data || '0'), 10) || 0; }
         if (v > lastVersion) {
           lastVersion = v;
           setSSE(`tick v${v}`);
@@ -646,6 +664,10 @@
       });
       reflectBaseDin(res.din);
       outSum().textContent = (res.din==null) ? "" : `Skier code ${res.code}, ${res.explain}`;
+    }
+    async function fetchLatestLiabilityWrap(lsid, email){
+      const tag = lsid ? `ls_${lsid}` : "";
+      try { return await fetchLatestLiability({ tag, email }); } catch { return {}; }
     }
     function openDINModal(p, meta, prior){
       current = {
