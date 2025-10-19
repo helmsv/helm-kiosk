@@ -63,7 +63,7 @@
       </div>
 
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
-      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v8</div>
+      <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v9</div>
     </div>
   </main>
 
@@ -173,7 +173,7 @@
 
   <script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 3000; // safety poll
+    const REFRESH_MS = 3000;
     const tb = document.getElementById("tbody");
     const sseEl = document.getElementById("sseStatus");
     const fromDateEl = document.getElementById('fromDate');
@@ -182,14 +182,14 @@
 
     function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2200); }
 
-    // --- Time parsing & range helpers (UTC-safe + local-day filtering) ---
+    // ----- Date helpers (treat SW v4 "YYYY-MM-DD HH:mm:ss" as UTC) -----
     function parseSWDateMs(s) {
       if (!s) return NaN;
-      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return new Date(s).getTime(); // ISO
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return new Date(s).getTime();
       const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
       if (m) {
         const [, y, mo, d, h, mi, se] = m;
-        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se); // Smartwaiver v4 "YYYY-MM-DD HH:mm:ss" -> UTC
+        return Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
       }
       return new Date(s).getTime();
     }
@@ -225,95 +225,84 @@
     }
     function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
 
-    // --- Skier type sanitizer (only I / II / III allowed) ---
+    // --- Skier type sanitizer ---
     function normalizeSkierType(v){
       const t = String(v || '').trim().toUpperCase().replace(/\s+/g,'');
       if (t === 'I' || t === 'II' || t === 'III') return t;
       if (t === 'TYPEI') return 'I';
       if (t === 'TYPEII') return 'II';
       if (t === 'TYPEIII') return 'III';
-      return ''; // anything else (e.g., "YES") becomes blank
+      return '';
     }
     function displaySkier(v){ return normalizeSkierType(v) || '—'; }
 
     // -----------------------
     // Local row store + keys
     // -----------------------
-    const store = new Map(); // key => row
+    const store = new Map();
     function rowKey(waiver_id, pidx){ return `${waiver_id || ''}#${String(pidx ?? 0)}`; }
     function upsertRow(row){ store.set(rowKey(row.waiver_id, row.participant_index), row); }
 
     // -----------------------
-    // Global HIDE state via Redis
+    // Server-hidden
     // -----------------------
-    const hiddenSet = new Set(); // populated from server
+    const hiddenSet = new Set();
     async function fetchHiddenKeys(){
       try{
         const r = await fetch('/api/hidden', { headers: { 'Cache-Control':'no-cache' }});
         const data = await r.json();
         hiddenSet.clear();
         (data?.keys || []).forEach(k => hiddenSet.add(String(k)));
-      }catch(e){
-        console.error('hidden', e);
-      }
+      }catch(e){ console.error('hidden', e); }
     }
     async function serverToggleHide(key, hide){
-      // optimistic UI for snappy feel
       const had = hiddenSet.has(key);
       if (hide) hiddenSet.add(key); else hiddenSet.delete(key);
       renderTable();
-
       async function tryRoute(url){
         const r = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
-          // send both boolean and string so either server implementation is happy
-          body: JSON.stringify({ key, hide, value: hide ? '1' : '0' })
+          body: JSON.stringify({ key, hide, value: hide ? '1':'0' })
         });
         const txt = await r.text();
         let json; try { json = JSON.parse(txt); } catch {}
         if (!r.ok) throw new Error(`HTTP ${r.status} ${txt.slice(0,200)}`);
         if (json && json.ok === false) throw new Error(json.error || 'toggle failed');
-        return json || { ok:true };
+        return true;
       }
-
       try{
-        try {
-          await tryRoute('/api/hidden-toggle');           // primary
-        } catch {
-          await tryRoute('/api/hidden');                  // fallback (same payload)
-        }
-        await fetchHiddenKeys();                          // re-sync all keys
+        try { await tryRoute('/api/hidden-toggle'); }
+        catch { await tryRoute('/api/hidden'); }
+        await fetchHiddenKeys();
         return true;
       }catch(e){
-        // revert optimistic change on hard failure
         if (had) hiddenSet.add(key); else hiddenSet.delete(key);
         renderTable();
-        console.error('hidden-toggle', e);
+        console.error(e);
         showToast(`Hide toggle failed: ${e.message || e}`);
         return false;
       }
     }
 
-    // Global "show hidden" UI state (defaults to HIDE on page load)
+    // UI state
     let showHidden = false;
     function reflectHiddenToggle(){
       toggleHiddenBtn.textContent = showHidden ? 'Hide Hidden' : 'Show Hidden';
     }
 
-    // ---------- Helper: visible errors for API calls ----------
+    // helper: fetch JSON w/ clear errors
     async function fetchJSONOrThrow(url) {
       const r = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
       const text = await r.text();
-      let json;
-      try { json = JSON.parse(text); } catch { json = undefined; }
-      if (!r.ok) throw new Error(`HTTP ${r.status} ${text.slice(0, 200)}`);
+      let json; try { json = JSON.parse(text); } catch {}
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${text.slice(0,200)}`);
       if (json && json.error) throw new Error(json.error);
       return json ?? {};
     }
 
     // -----------------------
-    // Render current store (sorted newest first)
+    // Render
     // -----------------------
     function renderTable(){
       const rowsAll = Array.from(store.values())
@@ -330,11 +319,8 @@
         tr.className = "border-b";
         if (hidden && showHidden) tr.classList.add("opacity-50");
 
-        // FIX: prefer Smartwaiver-provided PDF URL; fallback to viewer by waiverId
-        const pdfHref = (r.intake_pdf_url && /^https?:\/\//.test(r.intake_pdf_url))
-          ? r.intake_pdf_url
-          : (r.waiver_id ? `https://www.smartwaiver.com/sw/wa/${encodeURIComponent(r.waiver_id)}?pdf=1` : "");
-
+        // Use server proxy for PDF (no 404 public page issues)
+        const pdfHref = r.waiver_id ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}` : "";
         const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>` : "—";
         const hiddenPill = hidden && showHidden ? `<span class="pill">Hidden</span>` : "";
 
@@ -398,15 +384,20 @@
               if (!waiverId) { showToast("No intake ID on row."); return; }
               try {
                 const details = await fetchIntakeDetails(waiverId);
-                let p = null;
-                if (Array.isArray(details.participants) && details.participants.length){
-                  p = details.participants.find(pp => Number(pp.participant_index) === pindex) || details.participants[pindex] || details.participants[0];
-                }
-                // sanitize skier type before display/use
-                const st = normalizeSkierType((p && p.skier_type) || r.skier_type);
-                const participant = { first_name:first, last_name:last, email, age:r.age, weight_lb:r.weight_lb, height_in:r.height_in, skier_type: st };
-                const prior = await fetchLatestLiability({ tag: lsid ? `ls_${lsid}` : "", email });
-                openDINModal(p || participant, { email, lightspeed_id: lsid, first_name:first, last_name:last }, prior);
+                const p = pickParticipant(details, pindex);
+
+                const merged = {
+                  email:        p.email        ?? (email || ""),
+                  first_name:   p.first_name   ?? first,
+                  last_name:    p.last_name    ?? last,
+                  age:          finNum(p.age),
+                  weight_lb:    finNum(p.weight_lb),
+                  height_in:    finNum(p.height_in),
+                  skier_type:   normalizeSkierType(p.skier_type || "")
+                };
+
+                const prior = await fetchLatestLiability({ tag: lsid ? `ls_${lsid}` : "", email: merged.email });
+                openDINModal(merged, { email: merged.email, lightspeed_id: lsid, first_name: merged.first_name, last_name: merged.last_name }, prior);
               } catch (e) {
                 console.error(e);
                 showToast("Could not load intake or prior liability.");
@@ -433,7 +424,7 @@
     }
 
     // -----------------------
-    // Data fetch helpers (hardened)
+    // Data fetch helpers
     // -----------------------
     async function fetchIntakes(fromVal, toVal){
       const q = new URLSearchParams({ from: fromVal, to: toVal });
@@ -446,12 +437,11 @@
       return Array.isArray(data?.rows) ? data.rows : [];
     }
     async function fetchIntakeDetails(waiverId){
-      const data = await fetchJSONOrThrow(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
-      return data;
+      return await fetchJSONOrThrow(`/api/intake-details?waiverId=${encodeURIComponent(waiverId)}`);
     }
     async function fetchLatestLiability({ tag, email }){
       const q=new URLSearchParams(); if(tag) q.set("tag",tag); if(email) q.set("email",email);
-      const r = await fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
+      const r=await fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       if(!r.ok) return {};
       return await r.json();
     }
@@ -464,8 +454,37 @@
       return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
     }
 
+    // ----- participant extraction helpers for DIN -----
+    function finNum(v){ const n = Number(v); return Number.isFinite(n) ? n : null; }
+    function ageFromDob(dob){
+      if (!dob) return null;
+      const m = String(dob).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) return null;
+      const [ , y, mo, d ] = m.map(Number);
+      const now = new Date(); const b = new Date(y, mo-1, d);
+      let a = now.getFullYear() - y;
+      const hasnt = (now.getMonth() < b.getMonth()) || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate());
+      return hasnt ? a-1 : a;
+    }
+    function pickParticipant(details, pindex){
+      // Expect details.participants with normalized metrics from API; still merge defensively.
+      const arr = Array.isArray(details?.participants) ? details.participants : [];
+      const p = arr.find(pp => Number(pp.participant_index) === Number(pindex)) || arr[pindex] || arr[0] || {};
+      const out = {
+        participant_index: p.participant_index ?? 0,
+        first_name: p.first_name || '',
+        last_name : p.last_name  || '',
+        email     : p.email      || details?.email || '',
+        age       : finNum(p.age) ?? ageFromDob(p.dob),
+        weight_lb : finNum(p.weight_lb),
+        height_in : finNum(p.height_in),
+        skier_type: p.skier_type ? normalizeSkierType(p.skier_type) : ''
+      };
+      return out;
+    }
+
     // -----------------------
-    // Reconciliation & filtering (incl. local-day and server-hidden)
+    // Reconciliation & filtering
     // -----------------------
     function normalize(s){ return (s||'').toString().trim().toLowerCase(); }
     function makeLiabilityIndex(liabs){
@@ -485,52 +504,38 @@
     function applyReconciliation(intakeRows, liabIdx){
       const out = [];
       for (const r of intakeRows){
-        if (!inLocalDayRange(r.signed_on)) continue; // local-day filter
+        if (!inLocalDayRange(r.signed_on)) continue;
         const tagHit = r.lightspeed_id && liabIdx.byTag.has(String(r.lightspeed_id));
         const emailHit = r.email && liabIdx.byEmail.has(normalize(r.email));
         const nameHit = liabIdx.byName.has(`${normalize(r.first_name)}_${normalize(r.last_name)}`);
-        if (tagHit || emailHit || nameHit) continue; // drop if already has liability
+        if (tagHit || emailHit || nameHit) continue;
         out.push(r);
       }
       return out;
     }
 
     // -----------------------
-    // Poll with reconciliation (robust; partial success still renders)
+    // Poll
     // -----------------------
     async function refreshPoll(){
       try{
-        await fetchHiddenKeys(); // multi-device sync
-
-        const fromKey = (fromDateEl.value || '').slice(0,10); // YYYY-MM-DD
-        const toKey   = (toDateEl.value   || '').slice(0,10); // YYYY-MM-DD
-
+        await fetchHiddenKeys();
+        const fromKey = (fromDateEl.value || '').slice(0,10);
+        const toKey   = (toDateEl.value   || '').slice(0,10);
         let intakes = [], liabs = [];
         let intErr = null, liabErr = null;
-
         await Promise.all([
-          (async () => { try { intakes = await fetchIntakes(fromKey, toKey); } catch(e){ intErr = e; } })(),
-          (async () => { try { liabs   = await fetchLiabilities(fromKey, toKey); } catch(e){ liabErr = e; } })()
+          (async ()=>{ try{ intakes = await fetchIntakes(fromKey, toKey); } catch(e){ intErr = e; } })(),
+          (async ()=>{ try{ liabs   = await fetchLiabilities(fromKey, toKey); } catch(e){ liabErr = e; } })()
         ]);
-
-        if (intErr && liabErr) {
-          throw new Error(`open-intakes: ${intErr.message || intErr} | open-liabilities: ${liabErr.message || liabErr}`);
-        }
-
+        if (intErr && liabErr) throw new Error(`open-intakes: ${intErr.message || intErr} | open-liabilities: ${liabErr.message || liabErr}`);
         const liabIdx = makeLiabilityIndex(liabs);
-
         store.clear();
-        for (const row of applyReconciliation(intakes, liabIdx)){
-          upsertRow(row);
-        }
+        for (const row of applyReconciliation(intakes, liabIdx)){ upsertRow(row); }
         renderTable();
-
-        const foot = document.getElementById('foot');
         const parts = [];
-        if (intErr)  parts.push(`intakes error: ${intErr.message || intErr}`);
+        if (intErr) parts.push(`intakes error: ${intErr.message || intErr}`);
         if (liabErr) parts.push(`liabilities error: ${liabErr.message || liabErr}`);
-        const current = foot.textContent;
-        foot.textContent = (current ? current + ' • ' : '') + (parts.length ? parts.join(' • ') : '');
         if (parts.length) showToast(parts.join(' • '));
       }catch(e){
         console.error(e);
@@ -547,33 +552,19 @@
     });
 
     // -----------------------
-    // SSE subscriber (+ tick -> refresh now, JSON or number)
+    // SSE (with tick -> refresh)
     // -----------------------
     (function attachSSE(){
       function setSSE(s){ if (sseEl) sseEl.textContent = `SSE: ${s}`; }
       const es = new EventSource('/api/stream');
-
-      let lastVersion = 0;
-      let tickTimer = null;
-      const scheduleTickRefresh = () => {
-        if (tickTimer) return;
-        tickTimer = setTimeout(() => { tickTimer = null; refreshPoll(); }, 150);
-      };
-
+      let lastVersion = 0, tickTimer = null;
+      const scheduleTickRefresh = () => { if (tickTimer) return; tickTimer = setTimeout(()=>{ tickTimer=null; refreshPoll(); }, 150); };
       es.addEventListener('open', () => setSSE('connected'));
       es.addEventListener('ping', () => setSSE('ok'));
-
       es.addEventListener('tick', (e) => {
-        let v = 0;
-        try { const obj = JSON.parse(e.data); v = Number(obj.version) || 0; }
-        catch { v = parseInt((e.data || '0'), 10) || 0; }
-        if (v > lastVersion) {
-          lastVersion = v;
-          setSSE(`tick v${v}`);
-          scheduleTickRefresh();
-        }
+        let v = 0; try { const obj = JSON.parse(e.data); v = Number(obj.version) || 0; } catch { v = parseInt((e.data||'0'),10)||0; }
+        if (v > lastVersion) { lastVersion = v; setSSE(`tick v${v}`); scheduleTickRefresh(); }
       });
-
       es.addEventListener('intake', (e) => {
         setSSE('intake');
         try {
@@ -585,18 +576,16 @@
           const lightspeed_id = body.lightspeed_id || '';
           const intake_pdf_url = body.intake_pdf_url || '';
           const participants = Array.isArray(body.participants) ? body.participants : [];
-
           if (!inLocalDayRange(signed_on)) return;
-
           for (const p of participants) {
             const row = {
               waiver_id, signed_on, intake_pdf_url, lightspeed_id,
               email: p.email || email,
               first_name: p.first_name || '',
               last_name:  p.last_name || '',
-              age: p.age ?? null,
-              weight_lb: p.weight_lb ?? null,
-              height_in: p.height_in ?? null,
+              age: finNum(p.age),
+              weight_lb: finNum(p.weight_lb),
+              height_in: finNum(p.height_in),
               skier_type: normalizeSkierType(p.skier_type || ''),
               participant_index: p.participant_index ?? 0
             };
@@ -605,7 +594,6 @@
           renderTable();
         } catch {}
       });
-
       es.addEventListener('liability', (e) => {
         setSSE('liability');
         try {
@@ -614,20 +602,15 @@
           const lsid = (body.lightspeed_id || '').toString();
           const emails = new Set((body.participants || []).map(p => (p.email || '').toLowerCase()));
           const nameKeys = new Set((body.participants || []).map(p => `${(p.first_name||'').toLowerCase()}_${(p.last_name||'').toLowerCase()}`));
-
           for (const [key, r] of Array.from(store.entries())) {
             const byTag = lsid && r.lightspeed_id && String(r.lightspeed_id) === lsid;
             const byEmail = r.email && emails.has(String(r.email).toLowerCase());
             const byName = nameKeys.has(`${(r.first_name||'').toLowerCase()}_${(r.last_name||'').toLowerCase()}`);
-            if (byTag || byEmail || byName) {
-              store.delete(key);
-              if (hiddenSet.has(key)) hiddenSet.delete(key);
-            }
+            if (byTag || byEmail || byName) { store.delete(key); if (hiddenSet.has(key)) hiddenSet.delete(key); }
           }
           renderTable();
         } catch {}
       });
-
       es.onerror = () => setSSE('error');
     })();
 
@@ -699,10 +682,9 @@
         lightspeed_id:meta.lightspeed_id || "",
         first_name:   p.first_name || meta.first_name || "",
         last_name:    p.last_name  || meta.last_name  || "",
-        age:          Number(p.age) || NaN,
+        age:          Number(p.age) || (p.dob ? ageFromDob(p.dob) : NaN),
         weight_lb:    Number(p.weight_lb) || NaN,
         height_in:    Number(p.height_in) || NaN,
-        // sanitize skier type for display and default logic
         skier_type:   normalizeSkierType(p.skier_type || "")
       };
       document.getElementById("i_name").textContent   = [current.first_name,current.last_name].filter(Boolean).join(" ") || "—";
@@ -713,7 +695,6 @@
       document.getElementById("i_height").textContent = hcm ? `${hcm} cm` : "—";
       document.getElementById("i_skier").textContent  = displaySkier(current.skier_type);
 
-      // Inputs: default to sanitized type or "II"
       inpBSL().value = "";
       inpType().value = current.skier_type || "II";
       inpAgeAdj().value = "auto";
@@ -756,7 +737,7 @@
     // Boot
     // -----------------------
     (async ()=>{
-      showHidden = false; // default to hiding
+      showHidden = false;
       reflectHiddenToggle();
       setDefaultDatesToday();
       try {
