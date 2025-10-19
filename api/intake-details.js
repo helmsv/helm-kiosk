@@ -3,132 +3,89 @@ const SW_BASE = (process.env.SW_BASE_URL || 'https://api.smartwaiver.com').repla
 const API_BASE = `${SW_BASE}/v4`;
 const cleanKey = v => String(v || '').trim().replace(/[^\x20-\x7E]+/g, '');
 
-async function swGetJSON(path, key, accept = 'application/json') {
+async function swGetJSON(path, key){
   const url = `${API_BASE}${path}`;
-  let r = await fetch(url, { headers: { Accept: accept, 'sw-api-key': key }, cache: 'no-store' });
-  if (r.status === 401) r = await fetch(url, { headers: { Accept: accept, 'x-api-key': key }, cache: 'no-store' });
+  let r = await fetch(url, { headers: { Accept: 'application/json', 'sw-api-key': key }, cache: 'no-store' });
+  if (r.status === 401) r = await fetch(url, { headers: { Accept: 'application/json', 'x-api-key': key }, cache: 'no-store' });
   if (!r.ok) {
     const t = await r.text().catch(()=> '');
-    throw new Error(`${path} ${r.status} ${t.slice(0, 400)}`);
+    throw new Error(`${path} ${r.status} ${t.slice(0,200)}`);
   }
   return r.json();
 }
 
+// -------- helpers for tolerant parsing --------
+function toNumber(v){ const n = Number(v); return Number.isFinite(n) ? n : null; }
+function normalizeSkierType(s){
+  const t = String(s||'').trim().toUpperCase().replace(/\bTYPE\s*/,'');
+  return (t==='I'||t==='II'||t==='III') ? t : '';
+}
 function ageFromDob(dob){
   if (!dob) return null;
   const m = String(dob).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
-  const y = +m[1], mo = +m[2], d = +m[3];
+  const [ , y, mo, d ] = m.map(Number);
   const now = new Date(); const b = new Date(y, mo-1, d);
   let a = now.getFullYear() - y;
-  if (now.getMonth() < b.getMonth() || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate())) a--;
-  return a;
+  const beforeBDay = (now.getMonth() < b.getMonth()) || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate());
+  return beforeBDay ? a-1 : a;
 }
 
-const toNumber = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-
-function parseMaybeLbs(v){
-  if (v == null) return null;
-  const s = String(v).toLowerCase();
-  const m = s.match(/(\d+(\.\d+)?)/);
-  if (!m) return null;
-  let n = parseFloat(m[1]);
-  if (s.includes('kg')) n = n * 2.20462;
-  // sanity: typical rental weights 25–350 lb
-  if (n < 15 || n > 600) return null;
-  return Math.round(n);
-}
-function parseMaybeInches(v){
-  if (v == null) return null;
-  const s = String(v).toLowerCase().trim();
-  // 5'8" or 5' 8
-  let m = s.match(/^(\d+)\s*['’]\s*(\d{1,2})/);
-  if (m) return (+m[1]*12) + (+m[2]);
-  // 5 ft 8 in
-  m = s.match(/(\d+)\s*ft\.?\s*(\d+)?\s*in?/);
-  if (m) return (+m[1]*12) + (m[2] ? +m[2] : 0);
-  // 172 cm
-  m = s.match(/(\d+(\.\d+)?)\s*cm/);
-  if (m) return Math.round(parseFloat(m[1]) / 2.54);
-  // plain number: <=96 → inches, else assume cm
-  m = s.match(/(\d+(\.\d+)?)/);
-  if (m) {
-    const n = parseFloat(m[1]);
-    if (n <= 96) return Math.round(n);
-    if (n <= 300) return Math.round(n / 2.54);
+// Best-effort labeled extraction from any object shape
+function firstMatchValueByLabel(obj, re){
+  if (!obj || typeof obj !== 'object') return '';
+  const stack=[obj], seen=new Set([obj]);
+  while (stack.length){
+    const cur = stack.pop();
+    for (const [k,v] of Object.entries(cur)){
+      const label = String(k||'') + ' ' + String(cur?.displayText || cur?.label || '');
+      if (re.test(label)) {
+        if (typeof v === 'string' || typeof v === 'number') return String(v);
+        if (v && typeof v === 'object') {
+          if (typeof v.value === 'string' || typeof v.value === 'number') return String(v.value);
+          if (typeof v.answer === 'string' || typeof v.answer === 'number') return String(v.answer);
+          if (typeof v.displayText === 'string') return v.displayText;
+        }
+      }
+      if (v && typeof v === 'object' && !seen.has(v)) { seen.add(v); stack.push(v); }
+    }
   }
-  return null;
-}
-function normalizeSkierType(v){
-  const t = String(v || '').trim().toUpperCase().replace(/\s+/g,'');
-  if (t==='I' || t==='II' || t==='III') return t;
-  if (t==='TYPEI') return 'I';
-  if (t==='TYPEII') return 'II';
-  if (t==='TYPEIII') return 'III';
-  // common noise like Yes/No should NOT set a type
   return '';
 }
-
-// Deep scanners
-function* deepEntries(o, maxDepth = 7) {
-  if (!o || typeof o !== 'object') return;
-  const stack = [[o, 0]];
-  while (stack.length) {
-    const [cur, d] = stack.pop();
-    if (d > maxDepth) continue;
-    if (Array.isArray(cur)) { for (const v of cur) stack.push([v, d+1]); continue; }
-    for (const [k, v] of Object.entries(cur)) {
-      yield [k, v, cur];
-      if (v && typeof v === 'object') stack.push([v, d+1]);
-    }
-  }
+function parseMaybeLbs(raw){
+  const s = String(raw||'').toLowerCase();
+  const m = s.match(/(\d+(?:\.\d+)?)\s*(lb|lbs|pounds?)?/);
+  return m ? Number(m[1]) : null;
 }
-function firstMatchValueByLabel(root, labelRe) {
-  // shapes: {label/question/name/key/title: "...", value/text/answer/response: "..."}
-  for (const [, node] of deepEntries(root)) {
-    if (!node || typeof node !== 'object') continue;
-    const label = node.label || node.question || node.name || node.key || node.title || node.id;
-    if (label && labelRe.test(String(label))) {
-      const val = node.value ?? node.text ?? node.answer ?? node.response ?? node.selected ?? null;
-      if (val != null && val !== '') return val;
-    }
-  }
-  // keyValues / key-values: [{key:"...", value:"..."}]
-  const kvs = root?.keyValues || root?.['key-values'];
-  if (Array.isArray(kvs)) {
-    for (const kv of kvs) {
-      const k = kv.key || kv.name || '';
-      if (labelRe.test(String(k))) return kv.value ?? kv.val ?? null;
-    }
-  }
+function parseMaybeInches(raw){
+  const s = String(raw||'').toLowerCase();
+  // handles "5' 6\"", "5 ft 6 in", "66 in", "168 cm"
+  let m = s.match(/(\d+)\s*(?:ft|')\s*(\d+)?\s*(?:in|")?/);
+  if (m) return Number(m[1])*12 + (Number(m[2]||0));
+  m = s.match(/(\d+(?:\.\d+)?)\s*(?:in|")\b/);
+  if (m) return Number(m[1]);
+  m = s.match(/(\d+(?:\.\d+)?)\s*cm\b/);
+  if (m) return Math.round(Number(m[1]) / 2.54);
   return null;
 }
-
 function extractMetricsFromSource(src){
   const weightRaw = firstMatchValueByLabel(src, /\b(weight|wt)\b/i);
   const heightRaw = firstMatchValueByLabel(src, /\b(height|ht|inches|feet|cm)\b/i);
   const skierRaw  = firstMatchValueByLabel(src, /(skier).*?(type)|(^|\b)type($|\b)/i);
-
   const weight_lb = parseMaybeLbs(weightRaw);
   const height_in = parseMaybeInches(heightRaw);
   const skier_type = normalizeSkierType(skierRaw);
-
   return { weight_lb, height_in, skier_type };
 }
-
 function mergeParticipant(base, srcs) {
   let weight_lb = toNumber(base.weight_lb);
   let height_in = toNumber(base.height_in);
   let skier_type = normalizeSkierType(base.skier_type);
-
-  // try provided sources in order
   for (const s of srcs) {
     if (weight_lb == null) weight_lb = toNumber(s?.weight_lb) ?? parseMaybeLbs(s);
     if (height_in == null) height_in = toNumber(s?.height_in) ?? parseMaybeInches(s);
     if (!skier_type)       skier_type = normalizeSkierType(s?.skier_type ?? s);
   }
-
-  // last chance: labeled extraction
   for (const s of srcs) {
     if (!s || typeof s !== 'object') continue;
     const m = extractMetricsFromSource(s);
@@ -136,7 +93,6 @@ function mergeParticipant(base, srcs) {
     if (height_in == null && m.height_in != null) height_in = m.height_in;
     if (!skier_type && m.skier_type) skier_type = m.skier_type;
   }
-
   return { ...base, weight_lb, height_in, skier_type };
 }
 
@@ -152,12 +108,12 @@ export default async function handler(req, res){
     const topEmail = w.email || firstMatchValueByLabel(w, /email/i) || '';
     const baseParticipants = Array.isArray(w.participants) ? w.participants : [];
 
-    // 2) Optional, richer participant endpoint (if present for your account)
+    // 2) Optional: richer participant endpoint (may not be available on all plans)
     let pExt = [];
     try {
       const ext = await swGetJSON(`/waivers/${encodeURIComponent(waiverId)}/participants`, key);
       pExt = Array.isArray(ext?.participants) ? ext.participants : (Array.isArray(ext) ? ext : []);
-    } catch { /* endpoint not available on some plans; ignore */ }
+    } catch { /* ignore if not available */ }
 
     // Map by index or name
     const out = baseParticipants.map((p, idx) => {
@@ -170,7 +126,7 @@ export default async function handler(req, res){
         age       : toNumber(p.age) ?? ageFromDob(p.dob)
       };
 
-      // Find a matching ext participant by index or name
+      // Try to find matching ext participant by index or name
       let extP = pExt[idx];
       if (!extP) {
         const keyName = (x) => `${(x.first_name||x.firstName||'').trim().toLowerCase()}_${(x.last_name||x.lastName||'').trim().toLowerCase()}`;
@@ -178,11 +134,7 @@ export default async function handler(req, res){
         extP = pExt.find(q => keyName(q) === k);
       }
 
-      // Merge metrics from candidate sources: participant, ext participant, whole waiver
-      const merged = mergeParticipant(
-        baseP,
-        [p, extP, w]
-      );
+      const merged = mergeParticipant(baseP, [p, extP, w]);
       return {
         participant_index: merged.participant_index,
         first_name: merged.first_name,
