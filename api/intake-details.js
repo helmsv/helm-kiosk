@@ -1,199 +1,176 @@
-// api/intake-details.js
-// Robust Smartwaiver extraction + back-compat "intake" shape for the DIN page.
+// Next.js API route: /api/intake-details
+// Accepts waiverId | waiverID | id | swid and returns normalized participant data.
+// More robust parsing for Height, Weight, Skier Type.
 
-const SW_BASE = process.env.SW_BASE || "https://api.smartwaiver.com";
-const SW_KEY  = process.env.SW_API_KEY;
+const SW_BASE = "https://api.smartwaiver.com/v4";
 
-function bad(msg, status = 400) {
-  return new Response(JSON.stringify({ error: msg }), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" }
-  });
-}
-
-async function swGetJson(path) {
+async function swGet(path, apiKey) {
   const r = await fetch(`${SW_BASE}${path}`, {
-    headers: { accept: "application/json", "x-api-key": SW_KEY },
-    cache: "no-store",
+    headers: { "sw-api-key": apiKey, "accept": "application/json" },
+    redirect: "follow"
   });
-  if (!r.ok) {
-    const text = await r.text().catch(() => "");
-    throw new Error(`Smartwaiver ${path} failed: ${r.status} ${text || r.statusText}`);
-  }
-  return r.json();
+  // Return JSON or a safe fallback
+  try { return await r.json(); } catch { return {}; }
 }
 
-const SKIER_TYPE_MAP = new Map([
-  ["i","I"],["type i","I"],["1","I"],["beginner","I"],
-  ["ii","II"],["type ii","II"],["2","II"],["intermediate","II"],
-  ["iii","III"],["type iii","III"],["3","III"],["advanced","III"],["expert","III"],
-]);
-const norm = (s) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+function toInt(x) {
+  const n = parseInt(String(x).replace(/[^\d\-]/g, ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
 
-function inchesFromHeight(raw) {
-  if (raw == null) return null;
-  const s = norm(raw).replace(/"/g,"").replace(/inches?/g,"in").replace(/feet?/g,"ft");
-  let m;
-  if ((m = s.match(/(\d+(?:\.\d+)?)\s*ft(?:\s*(\d+(?:\.\d+)?)\s*in)?/))) {
-    const ft = parseFloat(m[1]); const inch = m[2] ? parseFloat(m[2]) : 0;
-    return Math.round(ft * 12 + inch);
-  }
-  if ((m = s.match(/^(\d+(?:\.\d+)?)[^\d]+(\d+(?:\.\d+)?)$/))) {
-    return Math.round(parseFloat(m[1]) * 12 + parseFloat(m[2]));
-  }
-  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*in$/))) return Math.round(parseFloat(m[1]));
-  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*cm$/))) return Math.round(parseFloat(m[1]) / 2.54);
-  const n = parseFloat(s);
-  if (Number.isFinite(n)) {
-    if (n > 100) return Math.round(n / 2.54);
-    if (n >= 30 && n <= 96) return Math.round(n);
+function inchesFromFeetInches(ft, inch) {
+  const f = toInt(ft), i = toInt(inch);
+  if (f == null && i == null) return null;
+  const total = (f || 0) * 12 + (i || 0);
+  return total > 0 ? total : null;
+}
+
+function inchesFromAnyHeight(val) {
+  if (!val) return null;
+  const s = String(val).toLowerCase().trim();
+
+  // Patterns like 5'11", 5 ft 11 in, 5-11, 5.11 (not ideal but common)
+  let m = s.match(/(\d+)\s*(?:'|ft|feet|-)\s*(\d+)?\s*(?:"|in|inches)?/i);
+  if (m) return inchesFromFeetInches(m[1], m[2] || 0);
+
+  // "71 in" or "71 inches"
+  m = s.match(/(\d+)\s*(?:in|inches)\b/);
+  if (m) return toInt(m[1]);
+
+  // "5.9 ft" etc.
+  m = s.match(/(\d+(?:\.\d+)?)\s*(?:ft|feet)\b/);
+  if (m) return Math.round(parseFloat(m[1]) * 12);
+
+  // Plain number: assume inches if 45–90, assume feet if 4–7.x
+  const num = parseFloat(s);
+  if (Number.isFinite(num)) {
+    if (num >= 45 && num <= 90) return Math.round(num); // inches
+    if (num >= 4 && num <= 7.5) return Math.round(num * 12); // feet
   }
   return null;
 }
-function poundsFromWeight(raw) {
-  if (raw == null) return null;
-  const s = norm(raw).replace(/pounds?/g,"lb").replace(/lbs?/g,"lb").replace(/kilograms?|kgs?/g,"kg");
-  let m;
-  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*lb$/))) return Math.round(parseFloat(m[1]));
-  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*kg$/))) return Math.round(parseFloat(m[1]) * 2.20462);
-  const n = parseFloat(s);
-  if (Number.isFinite(n)) return n < 70 ? Math.round(n * 2.20462) : Math.round(n);
-  return null;
-}
-function skierTypeFrom(raw) {
-  if (!raw) return "";
-  const s = norm(raw);
-  if (SKIER_TYPE_MAP.has(s)) return SKIER_TYPE_MAP.get(s);
-  const m = s.match(/type\s*(i{1,3}|\d)/i);
-  if (m) return skierTypeFrom(m[1]);
-  return "";
-}
-function ageFromDob(dob) {
-  if (!dob) return null;
-  const d = new Date(dob); if (isNaN(+d)) return null;
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const hadBd = (now.getMonth() > d.getMonth()) || (now.getMonth() === d.getMonth() && now.getDate() >= d.getDate());
-  return hadBd ? age : age - 1;
+
+function poundsFromAnyWeight(val) {
+  if (!val) return null;
+  const s = String(val).toLowerCase();
+  // "180 lb", "180lbs", "180 pounds"
+  const m = s.match(/(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Math.round(parseFloat(m[1]));
+  return Number.isFinite(n) ? n : null;
 }
 
-// Build a flat index of all (label,value,participantIndex) pairs to tolerate template variance
-function buildFieldIndex(root) {
-  const bucket = [];
-  const labelKeys = ["label","displayText","question","title","key","name","description","text"];
-  const valueKeys = ["value","answer","selected","selection","text","response"];
+function normalizeSkierType(val) {
+  if (!val) return "";
+  const s = String(val).trim().toUpperCase();
+  // Common inputs: "I", "II", "III", "TYPE I", "1", "2", "3", radio/checkbox text, etc.
+  if (/III\b|TYPE\s*III\b|\b3\b/.test(s)) return "III";
+  if (/II\b|TYPE\s*II\b|\b2\b/.test(s)) return "II";
+  if (/I\b(?!I)|TYPE\s*I\b|\b1\b/.test(s)) return "I";
+  return s.replace(/^TYPE\s*/, ""); // fallback
+}
 
-  const walk = (obj, participantIndex = null) => {
-    if (!obj || typeof obj !== "object") return;
-    for (const lk of labelKeys) if (lk in obj) {
-      for (const vk of valueKeys) if (vk in obj) {
-        const v = obj[vk];
-        if (v != null && v !== "") bucket.push({ label: norm(obj[lk]), value: String(v), participantIndex });
-      }
-    }
-    const pIdx = Number.isInteger(obj?.participantIndex) ? obj.participantIndex : participantIndex;
-    for (const v of Object.values(obj)) {
-      if (Array.isArray(v)) v.forEach((it) => walk(it, pIdx));
-      else if (v && typeof v === "object") walk(v, pIdx);
+// Build a searchable list of {label, value} from Smartwaiver participant structures
+function collectLabelValuePairs(p) {
+  const out = [];
+
+  const push = (label, value) => {
+    if (label == null && value == null) return;
+    out.push({ label: String(label || "").trim(), value });
+  };
+
+  const dig = (node) => {
+    if (!node) return;
+    if (Array.isArray(node)) node.forEach(dig);
+    else if (typeof node === "object") {
+      const label = node.label ?? node.title ?? node.text ?? node.name ?? node.l ?? node.t ?? node.n;
+      const value = node.value ?? node.v ?? node.answer ?? node.response ?? node.defaultValue ?? node.selected ?? node.s;
+      if (label != null || value != null) push(label, value);
+      // Recurse into common containers
+      dig(node.values);
+      dig(node.elements);
+      dig(node.fields);
+      dig(node.customParticipantFields);
     }
   };
-  walk(root);
-  return bucket;
-}
-function pickForParticipant(bucket, idx, labelRegexes) {
-  const byIdx = bucket.filter(b => b.participantIndex == null || b.participantIndex === idx);
-  for (const re of labelRegexes) {
-    const found = byIdx.find(b => re.test(b.label));
-    if (found) return found.value;
-  }
-  return null;
-}
-function mapParticipant(p, idx, fieldBucket) {
-  let height_in = inchesFromHeight(p.height_in ?? p.height ?? p.heightIn ?? null);
-  let weight_lb = poundsFromWeight(p.weight_lb ?? p.weight ?? p.weightLb ?? null);
-  let skier_type = skierTypeFrom(p.skier_type ?? p.skierType ?? p.type ?? "");
 
-  if (height_in == null) {
-    height_in = inchesFromHeight(pickForParticipant(fieldBucket, idx, [/height.*(ft|in|feet|inches|cm)/i, /^height$/i]));
-  }
-  if (weight_lb == null) {
-    weight_lb = poundsFromWeight(pickForParticipant(fieldBucket, idx, [/weight.*(lb|kg|pounds?|kilograms?)/i, /^weight$/i]));
-  }
-  if (!skier_type) {
-    skier_type = skierTypeFrom(pickForParticipant(fieldBucket, idx, [/skier.*type/i, /ability.*(level|type)/i]));
-  }
+  dig(p);
+  return out;
+}
 
-  const age = p.age ?? ageFromDob(p.dob);
+function findByLabel(pairs, ...needles) {
+  const N = needles.map(n => String(n).toLowerCase());
+  return pairs.find(({ label }) => {
+    const L = String(label || "").toLowerCase();
+    return N.some(n => L.includes(n));
+  })?.value ?? null;
+}
+
+function mapParticipant(p, index = 0) {
+  const pairs = collectLabelValuePairs(p);
+
+  const first = findByLabel(pairs, "first name", "firstname", "participant first");
+  const last  = findByLabel(pairs, "last name", "lastname", "participant last");
+  const dob   = findByLabel(pairs, "birth", "date of birth", "dob");
+
+  // Height
+  let height_in = null;
+  const hMixed  = findByLabel(pairs, "height", "height (ft)", "height (feet)", "height (in)", "inches", "ft");
+  const hFt     = findByLabel(pairs, "height (ft)", "height (feet)", "ft (height)");
+  const hIn     = findByLabel(pairs, "height (in)", "height (inches)", "in (height)");
+  if (hFt || hIn) height_in = inchesFromFeetInches(hFt, hIn);
+  if (height_in == null) height_in = inchesFromAnyHeight(hMixed);
+
+  // Weight
+  let weight_lb = null;
+  const wAny = findByLabel(pairs, "weight", "lbs", "pounds", "body weight");
+  weight_lb = poundsFromAnyWeight(wAny);
+
+  // Skier Type
+  let skier_type = "";
+  const stAny = findByLabel(pairs, "skier type", "skier ability", "type i", "type ii", "type iii", "type");
+  skier_type = normalizeSkierType(stAny);
 
   return {
-    participant_index: idx,
-    first_name: p.firstName ?? p.first_name ?? "",
-    last_name:  p.lastName ?? p.last_name ?? "",
-    email:      p.email ?? "",
-    dob:        p.dob ?? null,
-    age,
-    weight_lb:  weight_lb ?? null,
-    height_in:  height_in ?? null,
-    skier_type: skier_type ?? ""
+    participant_index: index,
+    first_name: p.firstName || first || "",
+    last_name:  p.lastName  || last  || "",
+    date_of_birth: p.dateOfBirth || dob || "",
+    height_in,
+    weight_lb,
+    skier_type
   };
 }
 
-async function handle(req) {
+export default async function handler(req, res) {
+  const apiKey = process.env.SW_API_KEY || "";
+  const waiverId =
+    (req.query.waiverId || req.query.waiverID || req.query.id || req.query.swid || "").toString().trim();
+
+  if (!apiKey) {
+    // Keep status 200 so the front-end doesn’t throw
+    return res.status(200).json({ error: "Missing SW_API_KEY", participants: [] });
+  }
+  if (!waiverId) {
+    return res.status(200).json({ error: "Missing waiverId", participants: [] });
+  }
+
   try {
-    const { searchParams } = new URL(req.url);
-    const waiverId = searchParams.get("waiverId") || searchParams.get("waiverID");
-    if (!waiverId) return bad("Missing waiverId");
+    const data = await swGet(`/waivers/${encodeURIComponent(waiverId)}`, apiKey);
+    const w = data?.waiver || data || {};
 
-    const w = await swGetJson(`/v4/waivers/${encodeURIComponent(waiverId)}`);
-
-    // Build once; tolerate any payload shape
-    const fieldBucket = buildFieldIndex(w);
-
-    // Participants array (Smartwaiver usually puts it on root as `participants`)
-    const participants = (w?.participants || w?.participantList || []).map((p, i) =>
-      mapParticipant(p, i, fieldBucket)
-    );
-
-    // Single-participant forms sometimes stash answers at top-level; patch them in
-    if (participants.length === 1) {
-      const only = participants[0];
-      if (only.height_in == null) only.height_in = inchesFromHeight(pickForParticipant(fieldBucket, null, [/height/i]));
-      if (only.weight_lb == null) only.weight_lb = poundsFromWeight(pickForParticipant(fieldBucket, null, [/weight/i]));
-      if (!only.skier_type) only.skier_type = skierTypeFrom(pickForParticipant(fieldBucket, null, [/skier.*type/i]));
-    }
-
-    // Back-compat: the DIN page likely expects an `intake` object + shorthand at the root.
-    const selected = participants[0] ?? {};
-    const intake = {
-      email:      w?.contact?.email || w?.email || selected.email || null,
-      age:        selected.age ?? null,
-      heightInches: selected.height_in ?? null,
-      weightLbs:    selected.weight_lb ?? null,
-      skierType:    selected.skier_type ?? "",
-      // Common alternates some UIs check:
-      height_in: selected.height_in ?? null,
-      weight_lb: selected.weight_lb ?? null,
-      skier_type: selected.skier_type ?? "",
+    const out = {
+      waiver_id: w.waiverId || waiverId,
+      first_name: w.firstName || "",
+      last_name:  w.lastName  || "",
+      email: w.email || w.contactEmail || "",
+      participants: Array.isArray(w.participants)
+        ? w.participants.map((p, i) => mapParticipant(p, p?.participant_index ?? i))
+        : []
     };
 
-    const body = {
-      waiver_id: waiverId,
-      email: intake.email,
-      participants,
-      intake, // <= back-compat for existing UI
-      // Also mirror the common root shorthands:
-      heightInches: intake.heightInches,
-      weightLbs: intake.weightLbs,
-      skierType: intake.skierType,
-    };
-
-    return new Response(JSON.stringify(body, null, 2), {
-      status: 200,
-      headers: { "content-type": "application/json", "cache-control": "no-store" }
-    });
-  } catch (err) {
-    return bad(String(err), 500);
+    return res.status(200).json(out);
+  } catch (e) {
+    return res.status(200).json({ error: String(e), participants: [] });
   }
 }
-
-export async function GET(req) { return handle(req); }
