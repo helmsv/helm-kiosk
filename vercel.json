@@ -2,7 +2,7 @@
   "redirects": [
     {
       "source": "/swap.html",
-      "destination": "https://new-interface-4aa0f0.zapier.app/page"
+      "destination": "https://new-interface-4aa0f0.zapier.app/page",
       "permanent": false
     }
   ]
