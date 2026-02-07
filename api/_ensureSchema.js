@@ -36,6 +36,23 @@ async function ensureSchema() {
       );
     `);
 
+    // inside ensureSchema(), after your table creation:
+    await pool.query(`
+      ALTER TABLE rental_agreements
+        ADD COLUMN IF NOT EXISTS waiver_id text,
+        ADD COLUMN IF NOT EXISTS template_id text;
+    
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'rental_agreements_waiver_id_unique'
+        ) THEN
+          ALTER TABLE rental_agreements
+            ADD CONSTRAINT rental_agreements_waiver_id_unique UNIQUE (waiver_id);
+        END IF;
+      END$$;
+    `);
+    
     // Helpful indexes
     await client.query(`CREATE INDEX IF NOT EXISTS idx_agreements_status ON rental_agreements(status);`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_agreements_signed_at ON rental_agreements(signed_at);`);
