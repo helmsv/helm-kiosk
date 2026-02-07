@@ -16,7 +16,7 @@ const LAST_EVENT_KEY = "sw:last_event";
 const VERSION_KEY = "sw:version";
 
 // Optional filters / auth
-const RENTAL_TEMPLATE_ID = process.env.SMARTWAIVER_RENTAL_TEMPLATE_ID || ""; // recommended
+const RENTAL_TEMPLATE_ID = process.env.LIABILITY_WAIVER_ID || ""; // recommended
 const SW_API_KEY = process.env.SW_API_KEY || process.env.SMARTWAIVER_API_KEY || ""; // for enrichment
 
 function ok(res, body = "ok") {
