@@ -47,13 +47,23 @@
           <label for="endDate">Signed end date</label>
           <input id="endDate" type="date" />
         </div>
-        <button id="searchBtn" class="primary">Search outstanding</button>
+
+        <!-- NEW: toggle -->
+        <div style="min-width:220px;">
+          <label for="includeReturned">Show returned</label>
+          <input id="includeReturned" type="checkbox"
+                 style="min-width:auto;width:auto;transform:translateY(2px);" />
+          <span class="muted" style="margin-left:8px;">Include returned rentals</span>
+        </div>
+
+        <button id="searchBtn" class="primary">Search</button>
         <button id="clearBtn">Clear</button>
         <span class="right muted" id="count"></span>
       </div>
 
       <table>
-        <thead>
+        <!-- NEW: id so JS can rewrite headers -->
+        <thead id="thead">
           <tr>
             <th>Signed</th>
             <th>Signer</th>
@@ -153,9 +163,7 @@
         resolve(result);
       }
 
-      function onCancel() {
-        cleanup(null);
-      }
+      function onCancel() { cleanup(null); }
 
       function onSubmit(e) {
         e.preventDefault();
@@ -182,14 +190,34 @@
     const name = el("name").value.trim();
     const startDate = el("startDate").value; // YYYY-MM-DD
     const endDate = el("endDate").value;     // YYYY-MM-DD
+    const includeReturned = el("includeReturned").checked;
 
     const qs = new URLSearchParams();
     if (name) qs.set("name", name);
     if (startDate) qs.set("startDate", startDate);
     if (endDate) qs.set("endDate", endDate);
+    if (includeReturned) qs.set("includeReturned", "1");
+
+    // Dynamic header
+    const thead = el("thead");
+    thead.innerHTML = includeReturned
+      ? `<tr>
+           <th>Signed</th>
+           <th>Signer</th>
+           <th>Agreement</th>
+           <th>Status</th>
+           <th>Returned</th>
+           <th></th>
+         </tr>`
+      : `<tr>
+           <th>Signed</th>
+           <th>Signer</th>
+           <th>Agreement</th>
+           <th></th>
+         </tr>`;
 
     const tbody = el("rows");
-    tbody.innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${includeReturned ? 6 : 4}" class="muted">Loading…</td></tr>`;
 
     try {
       const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`);
@@ -197,10 +225,10 @@
       if (!r.ok) throw new Error(data.error || "Search failed");
 
       const rentals = data.rentals || [];
-      el("count").textContent = rentals.length ? `${rentals.length} outstanding` : "";
+      el("count").textContent = rentals.length ? `${rentals.length} records` : "";
 
       if (!rentals.length) {
-        tbody.innerHTML = `<tr><td colspan="4" class="muted">No outstanding rentals found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${includeReturned ? 6 : 4}" class="muted">No records found.</td></tr>`;
         return;
       }
 
@@ -208,12 +236,29 @@
       for (const a of rentals) {
         const tr = document.createElement("tr");
         const signer = `${a.signer_first} ${a.signer_last}`.trim();
-        tr.innerHTML = `
-          <td>${fmtDate(a.signed_at)}</td>
-          <td>${signer}</td>
-          <td>${a.id}</td>
-          <td><button data-id="${a.id}" class="primary">Return</button></td>
-        `;
+
+        const status = (a.status || "").toString();
+        const returnedAt = a.returned_at ? fmtDate(a.returned_at) : "";
+        const canReturn = status === "OUT";
+
+        tr.innerHTML = includeReturned
+          ? `
+            <td>${fmtDate(a.signed_at)}</td>
+            <td>${signer}</td>
+            <td>${a.id}</td>
+            <td>${status}</td>
+            <td>${returnedAt}</td>
+            <td>
+              ${canReturn ? `<button data-id="${a.id}" class="primary">Return</button>` : `<span class="muted">—</span>`}
+            </td>
+          `
+          : `
+            <td>${fmtDate(a.signed_at)}</td>
+            <td>${signer}</td>
+            <td>${a.id}</td>
+            <td><button data-id="${a.id}" class="primary">Return</button></td>
+          `;
+
         tbody.appendChild(tr);
       }
 
@@ -221,7 +266,7 @@
         btn.addEventListener("click", () => doReturn(btn));
       });
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="4" class="muted">${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${includeReturned ? 6 : 4}" class="muted">${e.message}</td></tr>`;
     } finally {
       el("searchBtn").disabled = false;
     }
@@ -252,14 +297,20 @@
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Return failed");
 
-      btn.closest("tr").remove();
-      setToast(`Return logged for agreement #${agreementId}.`);
-
-      const remaining = el("rows").querySelectorAll("tr").length;
-      el("count").textContent = remaining ? `${remaining} outstanding` : "";
-      if (!remaining) {
-        el("rows").innerHTML = `<tr><td colspan="4" class="muted">No outstanding rentals found.</td></tr>`;
+      // If viewing all records, refresh so status/returned date update in-place
+      // If viewing only OUT, remove row as before.
+      if (el("includeReturned").checked) {
+        await search();
+      } else {
+        btn.closest("tr").remove();
+        const remaining = el("rows").querySelectorAll("tr").length;
+        el("count").textContent = remaining ? `${remaining} outstanding` : "";
+        if (!remaining) {
+          el("rows").innerHTML = `<tr><td colspan="4" class="muted">No outstanding rentals found.</td></tr>`;
+        }
       }
+
+      setToast(`Return logged for agreement #${agreementId}.`);
     } catch (e) {
       setToast(e.message);
       btn.disabled = false;
@@ -277,14 +328,25 @@
   }
 
   el("searchBtn").addEventListener("click", search);
+  el("includeReturned").addEventListener("change", search);
 
   el("clearBtn").addEventListener("click", () => {
     el("name").value = "";
     setDefaultDateRange();
+    el("includeReturned").checked = false;
+
+    el("thead").innerHTML = `
+      <tr>
+        <th>Signed</th>
+        <th>Signer</th>
+        <th>Agreement</th>
+        <th></th>
+      </tr>
+    `;
+
     el("rows").innerHTML = `<tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>`;
     el("count").textContent = "";
     setToast("");
-    // Optional: auto-run search after clearing to show default 7-day view
     search();
   });
 
@@ -292,7 +354,6 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     setDefaultDateRange();
-    // Auto-load the default 7-day view
     search();
   });
 </script>
