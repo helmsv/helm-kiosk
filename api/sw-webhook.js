@@ -1,6 +1,11 @@
 // api/sw-webhook.js
-// Smartwaiver v4 webhook receiver -> bumps a Redis "version" so clients refresh instantly.
-// Additionally: upserts signed waivers into Postgres as outstanding rental agreements.
+// Smartwaiver webhook receiver -> bumps Redis version so clients refresh instantly.
+// Additionally: fetches full waiver by ID and upserts into Postgres as outstanding rental agreement.
+//
+// Smartwaiver webhook payload commonly includes only:
+// - unique_id (waiver id)
+// - event (what happened)
+// so we MUST enrich via API to get templateId + signer fields.  [oai_citation:1‡Smartwaiver](https://support.smartwaiver.com/hc/en-us/articles/360057049551-What-are-Webhooks)
 
 const SW_BASE = (process.env.SW_BASE_URL || "https://api.smartwaiver.com").replace(/\/+$/, "");
 const SW_V4 = `${SW_BASE}/v4`;
@@ -8,16 +13,18 @@ const SW_V4 = `${SW_BASE}/v4`;
 const { getPool } = require("./_db");
 const { ensureSchema } = require("./_ensureSchema");
 
-// Upstash Redis REST (required): UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+// Upstash Redis REST (optional but used in your app): UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 const RURL = process.env.UPSTASH_REDIS_REST_URL;
 const RTOK = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 const LAST_EVENT_KEY = "sw:last_event";
 const VERSION_KEY = "sw:version";
 
-// Optional filters / auth
-const RENTAL_TEMPLATE_ID = process.env.LIABILITY_WAIVER_ID || ""; // recommended
-const SW_API_KEY = process.env.SW_API_KEY || process.env.SMARTWAIVER_API_KEY || ""; // for enrichment
+// Template ID to treat as “rental/outstanding”
+const LIABILITY_WAIVER_ID = (process.env.LIABILITY_WAIVER_ID || "").trim();
+
+// Smartwaiver API key for enrichment (you already used this for backfill)
+const SW_API_KEY = process.env.SW_API_KEY || process.env.SMARTWAIVER_API_KEY || "";
 
 function ok(res, body = "ok") {
   res.setHeader("Content-Type", "text/plain");
@@ -33,20 +40,16 @@ async function redisCmd(cmd, ...args) {
 }
 
 async function readJsonBody(req) {
-  // Vercel Node serverless: req.body may be object or string; req.json() is not always available.
   if (req.body && typeof req.body === "object") return req.body;
   if (req.body && typeof req.body === "string") {
     try { return JSON.parse(req.body); } catch { return {}; }
   }
-
-  // Fallback to raw stream
   const raw = await new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (c) => (data += c));
     req.on("end", () => resolve(data));
     req.on("error", reject);
   });
-
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { return {}; }
 }
@@ -56,13 +59,9 @@ async function fetchWaiverById(waiverId) {
 
   const url = `${SW_V4}/waivers/${encodeURIComponent(String(waiverId))}`;
   const r = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${SW_API_KEY}`,
-      Accept: "application/json",
-    },
+    headers: { Authorization: `Bearer ${SW_API_KEY}`, Accept: "application/json" },
     cache: "no-store",
   });
-
   if (!r.ok) return null;
   return r.json().catch(() => null);
 }
@@ -73,8 +72,8 @@ async function upsertOutstandingAgreementFromWaiver(waiver) {
 
   const templateId = waiver.templateId ? String(waiver.templateId) : null;
 
-  // Optional: filter to rental template only
-  if (RENTAL_TEMPLATE_ID && templateId && String(templateId) !== String(RENTAL_TEMPLATE_ID)) {
+  // Only ingest the rental template if configured
+  if (LIABILITY_WAIVER_ID && templateId && templateId !== LIABILITY_WAIVER_ID) {
     return { upserted: false, reason: "template filtered" };
   }
 
@@ -118,46 +117,40 @@ export default async function handler(req, res) {
   try {
     const json = await readJsonBody(req);
 
-    // Smartwaiver v4 payloads vary; these cover common shapes
-    const waiverId = json?.waiverId || json?.waiver?.waiverId || json?.id || "";
-    const templateId = json?.templateId || json?.waiver?.templateId || "";
-    const eventType = (json?.type || json?.event || "waiver").toString();
+    // Smartwaiver webhook commonly sends: unique_id + event  [oai_citation:2‡Smartwaiver](https://support.smartwaiver.com/hc/en-us/articles/360057049551-What-are-Webhooks)
+    const waiverId =
+      json?.waiverId ||
+      json?.waiver?.waiverId ||
+      json?.unique_id ||
+      json?.uniqueId ||
+      json?.id ||
+      "";
 
-    // Redis crumb + version bump (keep existing behavior)
+    const eventType = (json?.event || json?.type || json?.eventType || "waiver").toString();
+
+    // Store richer crumb for debugging (includes raw keys we received)
     if (RURL && RTOK) {
       const payload = JSON.stringify({
         ts: new Date().toISOString(),
         eventType,
-        waiverId,
-        templateId,
+        waiverId: String(waiverId || ""),
+        keys: Object.keys(json || {}).slice(0, 50),
+        // templateId is not typically present in webhook payload
       });
       await redisCmd("SET", LAST_EVENT_KEY, payload);
       await redisCmd("INCR", VERSION_KEY);
     }
 
-    // Populate Postgres (best-effort; never block webhook success)
+    // Best-effort DB population: always enrich if we have an id.
     if (waiverId) {
-      // First try: upsert directly from payload (if it contains names/createdOn)
-      let waiverObj =
-        json?.waiver && typeof json.waiver === "object"
-          ? { ...json.waiver, waiverId: json.waiver.waiverId || waiverId, templateId: json.waiver.templateId || templateId }
-          : { ...json, waiverId, templateId };
+      const full = await fetchWaiverById(waiverId);
 
-      let result = await upsertOutstandingAgreementFromWaiver(waiverObj);
+      // Smartwaiver responses may be { waiver: {...} } or {...}
+      const fullWaiver = full?.waiver && typeof full.waiver === "object" ? full.waiver : full;
 
-      // If missing signer details, optionally enrich by fetching full waiver
-      if (!result.upserted && result.reason === "missing signer name") {
-        const full = await fetchWaiverById(waiverId);
-        if (full) {
-          // Smartwaiver may return { waiver: {...} } or the waiver object itself
-          const fullWaiver = full.waiver && typeof full.waiver === "object" ? full.waiver : full;
-          result = await upsertOutstandingAgreementFromWaiver(fullWaiver);
-        }
+      if (fullWaiver && typeof fullWaiver === "object") {
+        await upsertOutstandingAgreementFromWaiver(fullWaiver);
       }
-
-      // Do not throw if DB insert fails; webhook must still return 200
-      // If you want debugging, log only:
-      // console.log("sw-webhook upsert:", result);
     }
 
     return ok(res);
