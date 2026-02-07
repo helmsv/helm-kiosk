@@ -1,0 +1,8 @@
+{
+  "name": "helm-kiosk",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "pg": "^8.17.1"
+  }
+}
