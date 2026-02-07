@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rental Returns</title>
+  <link rel="stylesheet" href="/nav.css">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 72px 16px 24px; }
+    .wrap { max-width: 980px; margin: 0 auto; }
+    h1 { margin: 0 0 12px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    label { display: block; font-size: 12px; margin-bottom: 6px; color: #333; }
+    input { padding: 10px; border: 1px solid #ccc; border-radius: 8px; min-width: 240px; }
+    button { padding: 10px 12px; border: 1px solid #333; background: #fff; border-radius: 8px; cursor: pointer; }
+    button.primary { background: #111; color: #fff; border-color: #111; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; }
+    th { font-size: 12px; color: #444; text-transform: uppercase; letter-spacing: .03em; }
+    .muted { color: #666; font-size: 12px; }
+    .toast { margin-top: 10px; font-size: 13px; }
+    .right { margin-left: auto; }
+  </style>
+  <script src="/nav.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Rental Returns</h1>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label for="name">Signer name (first, last, or both)</label>
+          <input id="name" type="text" placeholder="e.g., Tim Watkins" />
+        </div>
+        <div>
+          <label for="date">Signed date</label>
+          <input id="date" type="date" />
+        </div>
+        <button id="searchBtn" class="primary">Search outstanding</button>
+        <button id="clearBtn">Clear</button>
+        <span class="right muted" id="count"></span>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Signed</th>
+            <th>Signer</th>
+            <th>Agreement</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="row" style="margin-top: 12px;">
+        <div>
+          <label for="exportFrom">Export from</label>
+          <input id="exportFrom" type="date" />
+        </div>
+        <div>
+          <label for="exportTo">Export to</label>
+          <input id="exportTo" type="date" />
+        </div>
+        <button id="exportBtn">Export returns CSV</button>
+        <span class="toast" id="toast"></span>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const el = (id) => document.getElementById(id);
+
+  function setToast(msg) { el("toast").textContent = msg || ""; }
+
+  function fmtDate(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString();
+    } catch { return iso; }
+  }
+
+  async function search() {
+    setToast("");
+    el("searchBtn").disabled = true;
+
+    const name = el("name").value.trim();
+    const date = el("date").value; // YYYY-MM-DD
+
+    const qs = new URLSearchParams();
+    if (name) qs.set("name", name);
+    if (date) qs.set("date", date);
+
+    const tbody = el("rows");
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
+
+    try {
+      const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Search failed");
+
+      const rentals = data.rentals || [];
+      el("count").textContent = rentals.length ? `${rentals.length} outstanding` : "";
+
+      if (!rentals.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="muted">No outstanding rentals found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = "";
+      for (const a of rentals) {
+        const tr = document.createElement("tr");
+
+        const signer = `${a.signer_first} ${a.signer_last}`.trim();
+        tr.innerHTML = `
+          <td>${fmtDate(a.signed_at)}</td>
+          <td>${signer}</td>
+          <td>${a.id}</td>
+          <td><button data-id="${a.id}" class="primary">Return</button></td>
+        `;
+        tbody.appendChild(tr);
+      }
+
+      tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+        btn.addEventListener("click", () => doReturn(btn));
+      });
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="4" class="muted">${e.message}</td></tr>`;
+    } finally {
+      el("searchBtn").disabled = false;
+    }
+  }
+
+  async function doReturn(btn) {
+    setToast("");
+    const agreementId = Number(btn.getAttribute("data-id"));
+    if (!agreementId) return;
+
+    if (!confirm(`Log return for agreement #${agreementId}?`)) return;
+
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/rentals-return", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agreementId,
+          returnedBy: "kiosk", // replace with auth/user later
+          notes: null
+        })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Return failed");
+
+      // remove row
+      btn.closest("tr").remove();
+      setToast(`Return logged for agreement #${agreementId}.`);
+
+      // update count
+      const remaining = el("rows").querySelectorAll("tr").length;
+      el("count").textContent = remaining ? `${remaining} outstanding` : "";
+      if (!remaining) {
+        el("rows").innerHTML = `<tr><td colspan="4" class="muted">No outstanding rentals found.</td></tr>`;
+      }
+    } catch (e) {
+      setToast(e.message);
+      btn.disabled = false;
+    }
+  }
+
+  function exportCsv() {
+    setToast("");
+    const from = el("exportFrom").value;
+    const to = el("exportTo").value;
+    const qs = new URLSearchParams();
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    window.location.href = `/api/returns-export?${qs.toString()}`;
+  }
+
+  el("searchBtn").addEventListener("click", search);
+  el("clearBtn").addEventListener("click", () => {
+    el("name").value = "";
+    el("date").value = "";
+    el("rows").innerHTML = `<tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>`;
+    el("count").textContent = "";
+    setToast("");
+  });
+  el("exportBtn").addEventListener("click", exportCsv);
+</script>
+</body>
+</html>
