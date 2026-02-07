@@ -20,7 +20,10 @@ module.exports = async (req, res) => {
     }
 
     const name = (req.query.name || "").toString().trim();
-    const date = parseISODateOnly((req.query.date || "").toString().trim());
+
+    // New: range filters
+    const startDate = parseISODateOnly((req.query.startDate || "").toString().trim());
+    const endDate = parseISODateOnly((req.query.endDate || "").toString().trim());
 
     const pool = getPool();
 
@@ -28,15 +31,22 @@ module.exports = async (req, res) => {
     const params = [];
     let p = 1;
 
-    if (date) {
-      // signed_at within the local date (treat date as UTC day to keep consistent; adjust later if you prefer store timezone)
-      where.push(`signed_at >= $${p}::timestamptz AND signed_at < ($${p}::timestamptz + interval '1 day')`);
-      params.push(`${date}T00:00:00Z`);
+    // Date range behavior:
+    // - startDate only: signed_at >= startDate 00:00Z
+    // - endDate only:   signed_at < (endDate+1) 00:00Z (inclusive end day)
+    // - both: combine
+    if (startDate) {
+      where.push(`signed_at >= $${p}::timestamptz`);
+      params.push(`${startDate}T00:00:00Z`);
+      p += 1;
+    }
+    if (endDate) {
+      where.push(`signed_at < ($${p}::timestamptz + interval '1 day')`);
+      params.push(`${endDate}T00:00:00Z`);
       p += 1;
     }
 
     if (name) {
-      // Match first, last, or full name (case-insensitive)
       const n = `%${name.replace(/\s+/g, " ").toLowerCase()}%`;
       where.push(`(
         LOWER(signer_first) LIKE $${p}
@@ -48,11 +58,11 @@ module.exports = async (req, res) => {
     }
 
     const sql = `
-      SELECT id, signer_first, signer_last, signed_at, status
+      SELECT id, signer_first, signer_last, signed_at, status, waiver_id, template_id
       FROM rental_agreements
       WHERE ${where.join(" AND ")}
       ORDER BY signed_at DESC
-      LIMIT 200;
+      LIMIT 500;
     `;
 
     const { rows } = await pool.query(sql, params);
