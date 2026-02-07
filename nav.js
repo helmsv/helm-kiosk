@@ -1,11 +1,10 @@
 // nav.js
 (function () {
   const routes = [
-    { href: "/", label: "Waiver Start" },
-    { href: "/returns.html", label: "Rental Returns" },
-    { href: "/tech.html", label: "Tech" },
-    { href: "/thankyou.html", label: "Thank You" }
-  ];
+  { href: "/", label: "Waiver Start" },
+  { href: "/returns.html", label: "Rental Returns" },
+  { href: "/tech.html", label: "Pending Liability Waivers" }
+];
 
   function el(tag, attrs = {}, children = []) {
     const n = document.createElement(tag);
