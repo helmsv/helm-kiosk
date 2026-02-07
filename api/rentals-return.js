@@ -18,6 +18,18 @@ async function readJson(req) {
   });
 }
 
+function parseReturnTimestamp(input) {
+  // Accept:
+  // - YYYY-MM-DD (interpreted as 00:00:00Z)
+  // - ISO timestamp (passed through)
+  if (!input) return null;
+  const s = String(input).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00Z`;
+  // minimal sanity check for ISO-ish
+  if (s.length >= 10) return s;
+  return null;
+}
+
 module.exports = async (req, res) => {
   try {
     await ensureSchema();
@@ -40,14 +52,23 @@ module.exports = async (req, res) => {
     }
 
     const returnedBy = body.returnedBy ? String(body.returnedBy).slice(0, 200) : null;
-    const notes = body.notes ? String(body.notes).slice(0, 1000) : null;
+
+    // NEW: return date and comment
+    const returnedAt = parseReturnTimestamp(body.returnDate);
+    if (!returnedAt) {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "returnDate is required (YYYY-MM-DD or ISO timestamp)" }));
+      return;
+    }
+
+    const comment = body.comment ? String(body.comment).slice(0, 2000) : null;
 
     const pool = getPool();
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      // Ensure agreement exists and is still OUT
       const a = await client.query(
         `SELECT id, status FROM rental_agreements WHERE id = $1 FOR UPDATE;`,
         [agreementId]
@@ -69,21 +90,21 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Mark returned
+      // Mark returned using provided date
       const updated = await client.query(
         `UPDATE rental_agreements
-         SET status = 'RETURNED', returned_at = NOW()
+         SET status = 'RETURNED', returned_at = $2::timestamptz
          WHERE id = $1
          RETURNING id, signer_first, signer_last, signed_at, status, returned_at;`,
-        [agreementId]
+        [agreementId, returnedAt]
       );
 
-      // Log return event
+      // Log return event using provided date + comment
       const ev = await client.query(
-        `INSERT INTO return_events (agreement_id, returned_by, notes)
-         VALUES ($1, $2, $3)
+        `INSERT INTO return_events (agreement_id, returned_at, returned_by, notes)
+         VALUES ($1, $2::timestamptz, $3, $4)
          RETURNING id, agreement_id, returned_at, returned_by, notes, exported_at;`,
-        [agreementId, returnedBy, notes]
+        [agreementId, returnedAt, returnedBy, comment]
       );
 
       await client.query("COMMIT");
