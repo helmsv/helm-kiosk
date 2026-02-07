@@ -22,6 +22,11 @@
     .muted { color: #666; font-size: 12px; }
     .toast { margin-top: 10px; font-size: 13px; }
     .right { margin-left: auto; }
+
+    /* dialog styling */
+    dialog { border: 1px solid #ddd; border-radius: 12px; padding: 14px; max-width: 520px; width: 92vw; }
+    dialog::backdrop { background: rgba(0,0,0,0.35); }
+    textarea { font-family: inherit; }
   </style>
   <script src="/nav.js" defer></script>
 </head>
@@ -76,6 +81,32 @@
     </div>
   </div>
 
+  <!-- Return dialog -->
+  <dialog id="returnDialog">
+    <form method="dialog" id="returnForm">
+      <h3 style="margin:0 0 10px;">Log return</h3>
+
+      <div class="row">
+        <div style="flex:1;min-width:220px;">
+          <label for="returnDate">Return date</label>
+          <input id="returnDate" type="date" style="width:100%;" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label for="returnComment">Comment (equipment received)</label>
+        <textarea id="returnComment" rows="4"
+          placeholder="e.g., 1x skis, 1x poles, 1x boots"
+          style="width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;resize:vertical;"></textarea>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
+        <button type="button" id="cancelReturnBtn">Cancel</button>
+        <button type="submit" class="primary" id="confirmReturnBtn">Confirm return</button>
+      </div>
+    </form>
+  </dialog>
+
 <script>
   const el = (id) => document.getElementById(id);
 
@@ -88,6 +119,62 @@
     } catch { return iso; }
   }
 
+  function toYMD(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function setDefaultDateRange() {
+    const today = new Date();
+    const end = toYMD(today);
+    const startD = new Date(today);
+    startD.setDate(startD.getDate() - 7);
+    const start = toYMD(startD);
+
+    el("startDate").value = start;
+    el("endDate").value = end;
+  }
+
+  async function openReturnDialog(defaultDateYMD) {
+    return new Promise((resolve) => {
+      const dlg = el("returnDialog");
+      const cancelBtn = el("cancelReturnBtn");
+      const form = el("returnForm");
+
+      el("returnDate").value = defaultDateYMD || "";
+      el("returnComment").value = "";
+
+      function cleanup(result) {
+        cancelBtn.removeEventListener("click", onCancel);
+        form.removeEventListener("submit", onSubmit);
+        if (dlg.open) dlg.close();
+        resolve(result);
+      }
+
+      function onCancel() {
+        cleanup(null);
+      }
+
+      function onSubmit(e) {
+        e.preventDefault();
+        const returnDate = el("returnDate").value; // YYYY-MM-DD
+        const comment = el("returnComment").value.trim();
+        if (!returnDate) {
+          setToast("Return date is required.");
+          return;
+        }
+        cleanup({ returnDate, comment });
+      }
+
+      cancelBtn.addEventListener("click", onCancel);
+      form.addEventListener("submit", onSubmit);
+
+      dlg.showModal();
+    });
+  }
+
   async function search() {
     setToast("");
     el("searchBtn").disabled = true;
@@ -95,7 +182,7 @@
     const name = el("name").value.trim();
     const startDate = el("startDate").value; // YYYY-MM-DD
     const endDate = el("endDate").value;     // YYYY-MM-DD
-    
+
     const qs = new URLSearchParams();
     if (name) qs.set("name", name);
     if (startDate) qs.set("startDate", startDate);
@@ -120,7 +207,6 @@
       tbody.innerHTML = "";
       for (const a of rentals) {
         const tr = document.createElement("tr");
-
         const signer = `${a.signer_first} ${a.signer_last}`.trim();
         tr.innerHTML = `
           <td>${fmtDate(a.signed_at)}</td>
@@ -146,7 +232,9 @@
     const agreementId = Number(btn.getAttribute("data-id"));
     if (!agreementId) return;
 
-    if (!confirm(`Log return for agreement #${agreementId}?`)) return;
+    const todayYMD = toYMD(new Date());
+    const result = await openReturnDialog(todayYMD);
+    if (!result) return;
 
     btn.disabled = true;
     try {
@@ -155,18 +243,18 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agreementId,
-          returnedBy: "kiosk", // replace with auth/user later
-          notes: null
+          returnDate: result.returnDate,
+          comment: result.comment || null,
+          returnedBy: "kiosk" // replace with auth/user later
         })
       });
+
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Return failed");
 
-      // remove row
       btn.closest("tr").remove();
       setToast(`Return logged for agreement #${agreementId}.`);
 
-      // update count
       const remaining = el("rows").querySelectorAll("tr").length;
       el("count").textContent = remaining ? `${remaining} outstanding` : "";
       if (!remaining) {
@@ -189,15 +277,24 @@
   }
 
   el("searchBtn").addEventListener("click", search);
+
   el("clearBtn").addEventListener("click", () => {
     el("name").value = "";
-    el("startDate").value = "";
-    el("endDate").value = "";
+    setDefaultDateRange();
     el("rows").innerHTML = `<tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>`;
     el("count").textContent = "";
     setToast("");
+    // Optional: auto-run search after clearing to show default 7-day view
+    search();
   });
+
   el("exportBtn").addEventListener("click", exportCsv);
+
+  document.addEventListener("DOMContentLoaded", () => {
+    setDefaultDateRange();
+    // Auto-load the default 7-day view
+    search();
+  });
 </script>
 </body>
 </html>
