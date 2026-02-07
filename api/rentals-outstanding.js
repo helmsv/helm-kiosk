@@ -3,7 +3,6 @@ const { getPool } = require("./_db");
 const { ensureSchema } = require("./_ensureSchema");
 
 function parseISODateOnly(s) {
-  // Expect YYYY-MM-DD
   if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   return s;
 }
@@ -20,26 +19,30 @@ module.exports = async (req, res) => {
     }
 
     const name = (req.query.name || "").toString().trim();
-
-    // New: range filters
     const startDate = parseISODateOnly((req.query.startDate || "").toString().trim());
     const endDate = parseISODateOnly((req.query.endDate || "").toString().trim());
 
+    const includeReturned =
+      String(req.query.includeReturned || "").toLowerCase() === "1" ||
+      String(req.query.includeReturned || "").toLowerCase() === "true";
+
     const pool = getPool();
 
-    const where = ["status = 'OUT'"];
+    const where = [];
     const params = [];
     let p = 1;
 
-    // Date range behavior:
-    // - startDate only: signed_at >= startDate 00:00Z
-    // - endDate only:   signed_at < (endDate+1) 00:00Z (inclusive end day)
-    // - both: combine
+    // Default: only OUT. If includeReturned, do not filter status.
+    if (!includeReturned) {
+      where.push(`status = 'OUT'`);
+    }
+
     if (startDate) {
       where.push(`signed_at >= $${p}::timestamptz`);
       params.push(`${startDate}T00:00:00Z`);
       p += 1;
     }
+
     if (endDate) {
       where.push(`signed_at < ($${p}::timestamptz + interval '1 day')`);
       params.push(`${endDate}T00:00:00Z`);
@@ -58,9 +61,12 @@ module.exports = async (req, res) => {
     }
 
     const sql = `
-      SELECT id, signer_first, signer_last, signed_at, status, waiver_id, template_id
+      SELECT
+        id, waiver_id, template_id,
+        signer_first, signer_last,
+        signed_at, status, returned_at
       FROM rental_agreements
-      WHERE ${where.join(" AND ")}
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY signed_at DESC
       LIMIT 500;
     `;
