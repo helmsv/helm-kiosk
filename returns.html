@@ -35,8 +35,12 @@
           <input id="name" type="text" placeholder="e.g., Tim Watkins" />
         </div>
         <div>
-          <label for="date">Signed date</label>
-          <input id="date" type="date" />
+          <label for="startDate">Signed start date</label>
+          <input id="startDate" type="date" />
+        </div>
+        <div>
+          <label for="endDate">Signed end date</label>
+          <input id="endDate" type="date" />
         </div>
         <button id="searchBtn" class="primary">Search outstanding</button>
         <button id="clearBtn">Clear</button>
@@ -89,11 +93,13 @@
     el("searchBtn").disabled = true;
 
     const name = el("name").value.trim();
-    const date = el("date").value; // YYYY-MM-DD
-
+    const startDate = el("startDate").value; // YYYY-MM-DD
+    const endDate = el("endDate").value;     // YYYY-MM-DD
+    
     const qs = new URLSearchParams();
     if (name) qs.set("name", name);
-    if (date) qs.set("date", date);
+    if (startDate) qs.set("startDate", startDate);
+    if (endDate) qs.set("endDate", endDate);
 
     const tbody = el("rows");
     tbody.innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
@@ -185,7 +191,8 @@
   el("searchBtn").addEventListener("click", search);
   el("clearBtn").addEventListener("click", () => {
     el("name").value = "";
-    el("date").value = "";
+    el("startDate").value = "";
+    el("endDate").value = "";
     el("rows").innerHTML = `<tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>`;
     el("count").textContent = "";
     setToast("");
