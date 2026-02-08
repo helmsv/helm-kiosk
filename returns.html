@@ -13,6 +13,7 @@
     .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
     label { display: block; font-size: 12px; margin-bottom: 6px; color: #333; }
     input { padding: 10px; border: 1px solid #ccc; border-radius: 8px; min-width: 240px; }
+    select { padding: 10px; border: 1px solid #ccc; border-radius: 8px; min-width: 240px; }
     button { padding: 10px 12px; border: 1px solid #333; background: #fff; border-radius: 8px; cursor: pointer; }
     button.primary { background: #111; color: #fff; border-color: #111; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -27,6 +28,7 @@
     dialog { border: 1px solid #ddd; border-radius: 12px; padding: 14px; max-width: 520px; width: 92vw; }
     dialog::backdrop { background: rgba(0,0,0,0.35); }
     textarea { font-family: inherit; }
+    .actions { white-space: nowrap; display: flex; gap: 8px; align-items: center; }
   </style>
   <script src="/nav.js" defer></script>
 </head>
@@ -48,12 +50,14 @@
           <input id="endDate" type="date" />
         </div>
 
-        <!-- NEW: toggle -->
-        <div style="min-width:220px;">
-          <label for="includeReturned">Show returned</label>
-          <input id="includeReturned" type="checkbox"
-                 style="min-width:auto;width:auto;transform:translateY(2px);" />
-          <span class="muted" style="margin-left:8px;">Include returned rentals</span>
+        <!-- REPLACED: checkbox -> dropdown -->
+        <div>
+          <label for="statusFilter">Filter Results</label>
+          <select id="statusFilter">
+            <option value="ALL">All</option>
+            <option value="OUT" selected>OUT</option>
+            <option value="RETURNED">RETURNED</option>
+          </select>
         </div>
 
         <button id="searchBtn" class="primary">Search</button>
@@ -62,17 +66,19 @@
       </div>
 
       <table>
-        <!-- NEW: id so JS can rewrite headers -->
+        <!-- UPDATED: status/returned shown by default -->
         <thead id="thead">
           <tr>
             <th>Signed</th>
             <th>Signer</th>
             <th>Agreement</th>
+            <th>Status</th>
+            <th>Returned</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>
+          <tr><td colspan="6" class="muted">Run a search to see rentals.</td></tr>
         </tbody>
       </table>
 
@@ -113,6 +119,25 @@
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
         <button type="button" id="cancelReturnBtn">Cancel</button>
         <button type="submit" class="primary" id="confirmReturnBtn">Confirm return</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- NEW: Note dialog -->
+  <dialog id="noteDialog">
+    <form method="dialog" id="noteForm">
+      <h3 style="margin:0 0 10px;">Note</h3>
+
+      <div style="margin-top:10px;">
+        <label for="noteText">Comment / note</label>
+        <textarea id="noteText" rows="5"
+          placeholder="Add or edit a note for this agreement"
+          style="width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;resize:vertical;"></textarea>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
+        <button type="button" id="cancelNoteBtn">Cancel</button>
+        <button type="submit" class="primary" id="saveNoteBtn">Save note</button>
       </div>
     </form>
   </dialog>
@@ -183,6 +208,36 @@
     });
   }
 
+  // NEW: note dialog open
+  async function openNoteDialog(existingNote) {
+    return new Promise((resolve) => {
+      const dlg = el("noteDialog");
+      const cancelBtn = el("cancelNoteBtn");
+      const form = el("noteForm");
+
+      el("noteText").value = existingNote || "";
+
+      function cleanup(result) {
+        cancelBtn.removeEventListener("click", onCancel);
+        form.removeEventListener("submit", onSubmit);
+        if (dlg.open) dlg.close();
+        resolve(result);
+      }
+
+      function onCancel() { cleanup(null); }
+
+      function onSubmit(e) {
+        e.preventDefault();
+        cleanup({ note: el("noteText").value });
+      }
+
+      cancelBtn.addEventListener("click", onCancel);
+      form.addEventListener("submit", onSubmit);
+
+      dlg.showModal();
+    });
+  }
+
   async function search() {
     setToast("");
     el("searchBtn").disabled = true;
@@ -190,34 +245,16 @@
     const name = el("name").value.trim();
     const startDate = el("startDate").value; // YYYY-MM-DD
     const endDate = el("endDate").value;     // YYYY-MM-DD
-    const includeReturned = el("includeReturned").checked;
+    const statusFilter = el("statusFilter").value; // ALL | OUT | RETURNED
 
     const qs = new URLSearchParams();
     if (name) qs.set("name", name);
     if (startDate) qs.set("startDate", startDate);
     if (endDate) qs.set("endDate", endDate);
-    if (includeReturned) qs.set("includeReturned", "1");
-
-    // Dynamic header
-    const thead = el("thead");
-    thead.innerHTML = includeReturned
-      ? `<tr>
-           <th>Signed</th>
-           <th>Signer</th>
-           <th>Agreement</th>
-           <th>Status</th>
-           <th>Returned</th>
-           <th></th>
-         </tr>`
-      : `<tr>
-           <th>Signed</th>
-           <th>Signer</th>
-           <th>Agreement</th>
-           <th></th>
-         </tr>`;
+    if (statusFilter) qs.set("status", statusFilter);
 
     const tbody = el("rows");
-    tbody.innerHTML = `<tr><td colspan="${includeReturned ? 6 : 4}" class="muted">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
 
     try {
       const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`);
@@ -228,7 +265,7 @@
       el("count").textContent = rentals.length ? `${rentals.length} records` : "";
 
       if (!rentals.length) {
-        tbody.innerHTML = `<tr><td colspan="${includeReturned ? 6 : 4}" class="muted">No records found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="muted">No records found.</td></tr>`;
         return;
       }
 
@@ -241,32 +278,33 @@
         const returnedAt = a.returned_at ? fmtDate(a.returned_at) : "";
         const canReturn = status === "OUT";
 
-        tr.innerHTML = includeReturned
-          ? `
-            <td>${fmtDate(a.signed_at)}</td>
-            <td>${signer}</td>
-            <td>${a.id}</td>
-            <td>${status}</td>
-            <td>${returnedAt}</td>
-            <td>
-              ${canReturn ? `<button data-id="${a.id}" class="primary">Return</button>` : `<span class="muted">—</span>`}
-            </td>
-          `
-          : `
-            <td>${fmtDate(a.signed_at)}</td>
-            <td>${signer}</td>
-            <td>${a.id}</td>
-            <td><button data-id="${a.id}" class="primary">Return</button></td>
-          `;
+        const note = (a.note || "").toString();
+        const safeNote = note.replace(/"/g, "&quot;");
+
+        tr.innerHTML = `
+          <td>${fmtDate(a.signed_at)}</td>
+          <td>${signer}</td>
+          <td>${a.id}</td>
+          <td>${status}</td>
+          <td>${returnedAt}</td>
+          <td class="actions">
+            ${canReturn ? `<button data-action="return" data-id="${a.id}" class="primary">Return</button>` : `<span class="muted">—</span>`}
+            <button data-action="note" data-id="${a.id}" data-note="${safeNote}">Note</button>
+          </td>
+        `;
 
         tbody.appendChild(tr);
       }
 
-      tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+      tbody.querySelectorAll('button[data-action="return"]').forEach((btn) => {
         btn.addEventListener("click", () => doReturn(btn));
       });
+
+      tbody.querySelectorAll('button[data-action="note"]').forEach((btn) => {
+        btn.addEventListener("click", () => doNote(btn));
+      });
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="${includeReturned ? 6 : 4}" class="muted">${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`;
     } finally {
       el("searchBtn").disabled = false;
     }
@@ -297,22 +335,47 @@
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Return failed");
 
-      // If viewing all records, refresh so status/returned date update in-place
-      // If viewing only OUT, remove row as before.
-      if (el("includeReturned").checked) {
-        await search();
-      } else {
-        btn.closest("tr").remove();
-        const remaining = el("rows").querySelectorAll("tr").length;
-        el("count").textContent = remaining ? `${remaining} outstanding` : "";
-        if (!remaining) {
-          el("rows").innerHTML = `<tr><td colspan="4" class="muted">No outstanding rentals found.</td></tr>`;
-        }
-      }
-
       setToast(`Return logged for agreement #${agreementId}.`);
+      await search(); // always refresh to update status/returned date
     } catch (e) {
       setToast(e.message);
+      btn.disabled = false;
+    }
+  }
+
+  // NEW: note save flow
+  async function doNote(btn) {
+    setToast("");
+    const agreementId = Number(btn.getAttribute("data-id"));
+    if (!agreementId) return;
+
+    const existing = btn.getAttribute("data-note") || "";
+    const result = await openNoteDialog(existing);
+    if (!result) return;
+
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/rentals-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agreementId, note: result.note })
+      });
+
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Save note failed");
+
+      // Update cached note on buttons in this row
+      const tr = btn.closest("tr");
+      const newNote = (data.agreement.note || "").toString();
+      const safeNewNote = newNote.replace(/"/g, "&quot;");
+      tr.querySelectorAll('button[data-action="note"]').forEach((b) => {
+        b.setAttribute("data-note", safeNewNote);
+      });
+
+      setToast(`Note saved for agreement #${agreementId}.`);
+    } catch (e) {
+      setToast(e.message);
+    } finally {
       btn.disabled = false;
     }
   }
@@ -328,23 +391,14 @@
   }
 
   el("searchBtn").addEventListener("click", search);
-  el("includeReturned").addEventListener("change", search);
+  el("statusFilter").addEventListener("change", search);
 
   el("clearBtn").addEventListener("click", () => {
     el("name").value = "";
     setDefaultDateRange();
-    el("includeReturned").checked = false;
+    el("statusFilter").value = "OUT";
 
-    el("thead").innerHTML = `
-      <tr>
-        <th>Signed</th>
-        <th>Signer</th>
-        <th>Agreement</th>
-        <th></th>
-      </tr>
-    `;
-
-    el("rows").innerHTML = `<tr><td colspan="4" class="muted">Run a search to see outstanding rentals.</td></tr>`;
+    el("rows").innerHTML = `<tr><td colspan="6" class="muted">Run a search to see rentals.</td></tr>`;
     el("count").textContent = "";
     setToast("");
     search();
