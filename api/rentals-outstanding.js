@@ -22,9 +22,9 @@ module.exports = async (req, res) => {
     const startDate = parseISODateOnly((req.query.startDate || "").toString().trim());
     const endDate = parseISODateOnly((req.query.endDate || "").toString().trim());
 
-    const includeReturned =
-      String(req.query.includeReturned || "").toLowerCase() === "1" ||
-      String(req.query.includeReturned || "").toLowerCase() === "true";
+    // NEW: status filter
+    const statusRaw = (req.query.status || "OUT").toString().trim().toUpperCase();
+    const status = (statusRaw === "ALL" || statusRaw === "OUT" || statusRaw === "RETURNED") ? statusRaw : "OUT";
 
     const pool = getPool();
 
@@ -32,9 +32,10 @@ module.exports = async (req, res) => {
     const params = [];
     let p = 1;
 
-    // Default: only OUT. If includeReturned, do not filter status.
-    if (!includeReturned) {
-      where.push(`status = 'OUT'`);
+    if (status !== "ALL") {
+      where.push(`status = $${p}`);
+      params.push(status);
+      p += 1;
     }
 
     if (startDate) {
@@ -64,7 +65,8 @@ module.exports = async (req, res) => {
       SELECT
         id, waiver_id, template_id,
         signer_first, signer_last,
-        signed_at, status, returned_at
+        signed_at, status, returned_at,
+        COALESCE(note, '') AS note
       FROM rental_agreements
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY signed_at DESC
