@@ -68,13 +68,12 @@
         <div>
           <label for="statusFilter">Filter Results</label>
           <select id="statusFilter">
-            <option value="ALL">ALL</option>
+            <option value="ALL">All</option>
             <option value="OUT" selected>OUT</option>
             <option value="RETURNED">RETURNED</option>
           </select>
         </div>
 
-        <button id="searchBtn" class="primary">Search</button>
         <button id="clearBtn">Clear</button>
         <span class="right muted" id="count"></span>
       </div>
@@ -91,7 +90,7 @@
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="6" class="muted">Run a search to see rentals.</td></tr>
+          <tr><td colspan="6" class="muted">Adjust filters to see rentals.</td></tr>
         </tbody>
       </table>
 
@@ -185,6 +184,13 @@
     el("endDate").value = end;
   }
 
+  // Debounced auto-search on filter changes
+  let searchTimer = null;
+  function scheduleSearch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => search(), 250);
+  }
+
   async function openReturnDialog(defaultDateYMD) {
     return new Promise((resolve) => {
       const dlg = el("returnDialog");
@@ -205,7 +211,7 @@
 
       function onSubmit(e) {
         e.preventDefault();
-        const returnDate = el("returnDate").value; // YYYY-MM-DD
+        const returnDate = el("returnDate").value;
         const comment = el("returnComment").value.trim();
         if (!returnDate) {
           setToast("Return date is required.");
@@ -250,14 +256,20 @@
     });
   }
 
+  let inFlight = null;
+
   async function search() {
+    // Cancel any previous request (best-effort)
+    if (inFlight && inFlight.abort) inFlight.abort();
+    const controller = new AbortController();
+    inFlight = controller;
+
     setToast("");
-    el("searchBtn").disabled = true;
 
     const name = el("name").value.trim();
-    const startDate = el("startDate").value; // YYYY-MM-DD
-    const endDate = el("endDate").value;     // YYYY-MM-DD
-    const statusFilter = el("statusFilter").value; // ALL | OUT | RETURNED
+    const startDate = el("startDate").value;
+    const endDate = el("endDate").value;
+    const statusFilter = el("statusFilter").value;
 
     const qs = new URLSearchParams();
     if (name) qs.set("name", name);
@@ -269,7 +281,7 @@
     tbody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
 
     try {
-      const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`);
+      const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`, { signal: controller.signal });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Search failed");
 
@@ -304,21 +316,18 @@
             <button data-action="note" data-id="${a.id}" data-note="${safeNote}">Note</button>
           </td>
         `;
-
         tbody.appendChild(tr);
       }
 
       tbody.querySelectorAll('button[data-action="return"]').forEach((btn) => {
         btn.addEventListener("click", () => doReturn(btn));
       });
-
       tbody.querySelectorAll('button[data-action="note"]').forEach((btn) => {
         btn.addEventListener("click", () => doNote(btn));
       });
     } catch (e) {
+      if (e.name === "AbortError") return; // expected when typing quickly
       tbody.innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`;
-    } finally {
-      el("searchBtn").disabled = false;
     }
   }
 
@@ -400,15 +409,18 @@
     window.location.href = `/api/returns-export?${qs.toString()}`;
   }
 
-  el("searchBtn").addEventListener("click", search);
-  el("statusFilter").addEventListener("change", search);
+  // Automatic search on filter changes
+  el("name").addEventListener("input", scheduleSearch);
+  el("startDate").addEventListener("change", scheduleSearch);
+  el("endDate").addEventListener("change", scheduleSearch);
+  el("statusFilter").addEventListener("change", scheduleSearch);
 
   el("clearBtn").addEventListener("click", () => {
     el("name").value = "";
     setDefaultDateRange();
     el("statusFilter").value = "OUT";
 
-    el("rows").innerHTML = `<tr><td colspan="6" class="muted">Run a search to see rentals.</td></tr>`;
+    el("rows").innerHTML = `<tr><td colspan="6" class="muted">Adjust filters to see rentals.</td></tr>`;
     el("count").textContent = "";
     setToast("");
     search();
