@@ -2,8 +2,8 @@
 (function () {
   const routes = [
   { href: "/", label: "Waiver Start" },
-  { href: "/returns.html", label: "Rental Returns" },
-  { href: "/tech.html", label: "Pending Liability Waivers" }
+  { href: "/tech.html", label: "Pending Liability Waivers" },
+  { href: "/returns.html", label: "Rental Returns" }
 ];
 
   function el(tag, attrs = {}, children = []) {
