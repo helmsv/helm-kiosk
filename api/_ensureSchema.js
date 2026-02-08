@@ -24,6 +24,11 @@ async function ensureSchema() {
       );
     `);
 
+    await pool.query(`
+    ALTER TABLE rental_agreements
+       ADD COLUMN IF NOT EXISTS note text;
+  `);
+    
     // Return log (events)
     await client.query(`
       CREATE TABLE IF NOT EXISTS return_events (
