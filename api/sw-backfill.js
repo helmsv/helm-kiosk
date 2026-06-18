@@ -129,6 +129,18 @@ async function readJson(req) {
 
 module.exports = async function handler(req, res) {
   try {
+    // TEMP probe: confirm handler runs + report runtime/env presence (no secrets)
+    if (req.query && req.query.probe) {
+      return json(res, 200, {
+        probe: true,
+        node: process.version,
+        hasBackfillToken: !!BACKFILL_TOKEN,
+        hasLiabilityId: !!LIABILITY_WAIVER_ID,
+        hasSwKey: !!SW_API_KEY,
+        method: req.method,
+      });
+    }
+
     if (req.method !== "POST") return json(res, 405, { error: "Method Not Allowed" });
 
     if (!BACKFILL_TOKEN) {
