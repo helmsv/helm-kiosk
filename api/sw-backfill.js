@@ -13,9 +13,9 @@ const SW_API_KEY = process.env.SW_API_KEY || process.env.SMARTWAIVER_API_KEY || 
 const BACKFILL_TOKEN = (process.env.BACKFILL_TOKEN || "").trim();
 
 function json(res, status, obj) {
-  res.status(status);
+  res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
-  res.send(JSON.stringify(obj));
+  res.end(JSON.stringify(obj));
 }
 
 function getAuthToken(req) {
@@ -53,6 +53,7 @@ async function fetchWaiverSummaries({ templateId, fromDts, toDts, limit, offset 
   const r = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${SW_API_KEY}`, Accept: "application/json" },
     cache: "no-store",
+    signal: AbortSignal.timeout(8000),
   });
 
   if (!r.ok) {
