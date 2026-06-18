@@ -26,7 +26,8 @@ async function ensureSchema() {
 
     await pool.query(`
     ALTER TABLE rental_agreements
-       ADD COLUMN IF NOT EXISTS note text;
+       ADD COLUMN IF NOT EXISTS note text,
+       ADD COLUMN IF NOT EXISTS phone text;
   `);
     
     // Return log (events)

@@ -83,6 +83,7 @@
           <tr>
             <th>Signed</th>
             <th>Signer</th>
+            <th>Phone</th>
             <th>Agreement</th>
             <th>Status</th>
             <th>Returned</th>
@@ -90,7 +91,7 @@
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="6" class="muted">Adjust filters to see rentals.</td></tr>
+          <tr><td colspan="7" class="muted">Adjust filters to see rentals.</td></tr>
         </tbody>
       </table>
 
@@ -278,7 +279,7 @@
     if (statusFilter) qs.set("status", statusFilter);
 
     const tbody = el("rows");
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
 
     try {
       const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`, { signal: controller.signal });
@@ -289,7 +290,7 @@
       el("count").textContent = rentals.length ? `${rentals.length} records` : "";
 
       if (!rentals.length) {
-        tbody.innerHTML = `<tr><td colspan="6" class="muted">No records found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="muted">No records found.</td></tr>`;
         return;
       }
 
@@ -308,6 +309,7 @@
         tr.innerHTML = `
           <td>${fmtDate(a.signed_at)}</td>
           <td>${signer}</td>
+          <td>${a.phone || ''}</td>
           <td>${a.id}</td>
           <td>${status}</td>
           <td>${returnedAt}</td>

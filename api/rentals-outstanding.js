@@ -66,7 +66,8 @@ module.exports = async (req, res) => {
         id, waiver_id, template_id,
         signer_first, signer_last,
         signed_at, status, returned_at,
-        COALESCE(note, '') AS note
+        COALESCE(note, '') AS note,
+        COALESCE(phone, '') AS phone
       FROM rental_agreements
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY signed_at DESC
