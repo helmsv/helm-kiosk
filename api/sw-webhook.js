@@ -94,7 +94,7 @@ async function upsertOutstandingAgreementFromWaiver(waiver) {
     INSERT INTO rental_agreements
       (waiver_id, template_id, signer_first, signer_last, phone, signed_at, status)
     VALUES
-      ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()), 'OUT')
+      ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7)
     ON CONFLICT (waiver_id) DO UPDATE
       SET template_id  = EXCLUDED.template_id,
           signer_first = EXCLUDED.signer_first,
@@ -102,12 +102,12 @@ async function upsertOutstandingAgreementFromWaiver(waiver) {
           phone        = EXCLUDED.phone,
           signed_at    = EXCLUDED.signed_at,
           status       = CASE
-                        WHEN rental_agreements.status = 'RETURNED' THEN 'RETURNED'
-                        ELSE 'OUT'
+                        WHEN rental_agreements.status = $8 THEN $8
+                        ELSE $7
                       END
     RETURNING id, waiver_id, status;
     `,
-    [waiverId, templateId, signerFirst, signerLast, phone || null, signedAtRaw]
+    [waiverId, templateId, signerFirst, signerLast, phone || null, signedAtRaw, 'OUT', 'RETURNED']
   );
 
   return { upserted: true, agreement: rows[0] };
