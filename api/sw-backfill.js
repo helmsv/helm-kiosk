@@ -126,7 +126,7 @@ async function readJson(req) {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
     if (req.method !== "POST") return json(res, 405, { error: "Method Not Allowed" });
 
