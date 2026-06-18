@@ -26,6 +26,7 @@ function App() {
                     <tr>
                         <th>Customer Name</th>
                         <th>Contact Details</th>
+                        <th>Phone</th>
                         <th>Waiver Completion Time</th>
                         <th>Form Link</th>
                         <th>Status</th>
@@ -37,6 +38,7 @@ function App() {
                         <tr key={consultation._id}>
                             <td>{consultation.customerName}</td>
                             <td>{consultation.contactDetails}</td>
+                            <td>{consultation.phone}</td>
                             <td>{new Date(consultation.waiverCompletionTime).toLocaleString()}</td>
                             <td><a href={consultation.formLink} target="_blank" rel="noopener noreferrer">Open Form</a></td>
                             <td>{consultation.status}</td>

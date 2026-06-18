@@ -25,6 +25,7 @@ mongoose.connect(mongoURI, {
 const ConsultationSchema = new mongoose.Schema({
   customerName: String,
   contactDetails: String,
+  phone: String,
   waiverCompletionTime: Date,
   formLink: String,
   status: { type: String, default: 'Pending' }
@@ -35,11 +36,12 @@ const Consultation = mongoose.model('Consultation', ConsultationSchema);
 // Webhook endpoint for SmartWaiver
 app.post('/webhook/waiver-completed', async (req, res) => {
   const waiverData = req.body;
-  const { customerName, contactDetails, waiverCompletionTime } = waiverData;
+  const { customerName, contactDetails, phone, waiverCompletionTime } = waiverData;
 
   const newConsultation = new Consultation({
     customerName,
     contactDetails,
+    phone,
     waiverCompletionTime,
     formLink: `https://smartwaiver.com/link-to-prefilled-form?customerId=${waiverData.customerId}`
   });
