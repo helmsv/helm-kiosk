@@ -63,6 +63,21 @@ async function fetchWaiverSummaries({ templateId, fromDts, toDts, limit, offset 
   return r.json();
 }
 
+// Summaries from /v4/waivers do NOT include phone; fetch the full waiver by id to get it.
+async function fetchWaiverById(waiverId) {
+  if (!SW_API_KEY) return null;
+  const url = `${SW_V4}/waivers/${encodeURIComponent(String(waiverId))}`;
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${SW_API_KEY}`, Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) return null;
+  const full = await r.json().catch(() => null);
+  // Smartwaiver responses may be { waiver: {...} } or {...}
+  return full?.waiver && typeof full.waiver === "object" ? full.waiver : full;
+}
+
 async function upsertOutstandingAgreementFromWaiverSummary(summary) {
   const waiverId = summary.waiverId ? String(summary.waiverId) : null;
   if (!waiverId) return { ok: false, reason: "missing waiverId" };
@@ -76,13 +91,16 @@ async function upsertOutstandingAgreementFromWaiverSummary(summary) {
 
   const signerFirst = (summary.firstName || summary.signerFirstName || "").trim();
   const signerLast = (summary.lastName || summary.signerLastName || "").trim();
-  const phone = (summary.phone || "").trim();
   const signedAtRaw = summary.createdOn || summary.createdAt || summary.signedAt || null;
 
   // If summaries don't include names, caller should enrich; here we just skip
   if (!signerFirst && !signerLast) {
     return { ok: false, reason: "missing signer name" };
   }
+
+  // Phone is only present on the full waiver, not the summary — enrich.
+  const full = await fetchWaiverById(waiverId);
+  const phone = (full && full.phone ? String(full.phone) : "").trim();
 
   await ensureSchema();
   const pool = getPool();
