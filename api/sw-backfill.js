@@ -79,7 +79,7 @@ async function upsertOutstandingAgreementFromWaiverSummary(summary) {
   const phone = (summary.phone || "").trim();
   const signedAtRaw = summary.createdOn || summary.createdAt || summary.signedAt || null;
 
-  // If summaries don’t include names, caller should enrich; here we just skip
+  // If summaries don't include names, caller should enrich; here we just skip
   if (!signerFirst && !signerLast) {
     return { ok: false, reason: "missing signer name" };
   }
@@ -105,7 +105,7 @@ async function upsertOutstandingAgreementFromWaiverSummary(summary) {
                       END
     RETURNING id, waiver_id, status;
     `,
-    [waiverId, templateId, signerFirst, signerLast, phone || null, signedAtRaw, ‘OUT’, ‘RETURNED’]
+    [waiverId, templateId, signerFirst, signerLast, phone || null, signedAtRaw, 'OUT', 'RETURNED']
   );
 
   return { ok: true, agreement: rows[0] };
@@ -129,18 +129,6 @@ async function readJson(req) {
 
 module.exports = async function handler(req, res) {
   try {
-    // TEMP probe: confirm handler runs + report runtime/env presence (no secrets)
-    if (req.query && req.query.probe) {
-      return json(res, 200, {
-        probe: true,
-        node: process.version,
-        hasBackfillToken: !!BACKFILL_TOKEN,
-        hasLiabilityId: !!LIABILITY_WAIVER_ID,
-        hasSwKey: !!SW_API_KEY,
-        method: req.method,
-      });
-    }
-
     if (req.method !== "POST") return json(res, 405, { error: "Method Not Allowed" });
 
     if (!BACKFILL_TOKEN) {
