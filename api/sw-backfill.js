@@ -75,6 +75,7 @@ async function upsertOutstandingAgreementFromWaiverSummary(summary) {
 
   const signerFirst = (summary.firstName || summary.signerFirstName || "").trim();
   const signerLast = (summary.lastName || summary.signerLastName || "").trim();
+  const phone = (summary.phone || "").trim();
   const signedAtRaw = summary.createdOn || summary.createdAt || summary.signedAt || null;
 
   // If summaries don’t include names, caller should enrich; here we just skip
@@ -88,21 +89,22 @@ async function upsertOutstandingAgreementFromWaiverSummary(summary) {
   const { rows } = await pool.query(
     `
     INSERT INTO rental_agreements
-      (waiver_id, template_id, signer_first, signer_last, signed_at, status)
+      (waiver_id, template_id, signer_first, signer_last, phone, signed_at, status)
     VALUES
-      ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()), 'OUT')
+      ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()), ‘OUT’)
     ON CONFLICT (waiver_id) DO UPDATE
       SET template_id  = EXCLUDED.template_id,
           signer_first = EXCLUDED.signer_first,
           signer_last  = EXCLUDED.signer_last,
+          phone        = EXCLUDED.phone,
           signed_at    = EXCLUDED.signed_at,
           status       = CASE
-                        WHEN rental_agreements.status = 'RETURNED' THEN 'RETURNED'
-                        ELSE 'OUT'
+                        WHEN rental_agreements.status = ‘RETURNED’ THEN ‘RETURNED’
+                        ELSE ‘OUT’
                       END
     RETURNING id, waiver_id, status;
     `,
-    [waiverId, templateId, signerFirst, signerLast, signedAtRaw]
+    [waiverId, templateId, signerFirst, signerLast, phone || null, signedAtRaw]
   );
 
   return { ok: true, agreement: rows[0] };
