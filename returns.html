@@ -167,6 +167,20 @@
     } catch { return iso; }
   }
 
+  // Render a phone number as a Zoom Phone click-to-dial link.
+  // Uses the zoomphonecall:// scheme so the click opens the Zoom desktop client.
+  function phoneCell(phone) {
+    const raw = (phone || "").toString().trim();
+    if (!raw) return "";
+    // Keep a leading + (country code) and digits only for the dial target.
+    const dial = raw.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+    if (!dial.replace(/\D/g, "")) return raw; // no digits — show as-is, not dialable
+    const display = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // dial is already sanitized to [0-9+]; pass it literally so the scheme
+    // matches Zoom's documented format (zoomphonecall://+15551234567).
+    return `<a href="zoomphonecall://${dial}" title="Call with Zoom Phone">${display}</a>`;
+  }
+
   function toYMD(d) {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -309,7 +323,7 @@
         tr.innerHTML = `
           <td>${fmtDate(a.signed_at)}</td>
           <td>${signer}</td>
-          <td>${a.phone || ''}</td>
+          <td>${phoneCell(a.phone)}</td>
           <td>${a.id}</td>
           <td>${status}</td>
           <td>${returnedAt}</td>
