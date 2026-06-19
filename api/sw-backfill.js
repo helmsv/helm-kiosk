@@ -39,6 +39,19 @@ function parseISO(s) {
   return v;
 }
 
+// Phone lives on a participant (adult signers) or on the guardian (minors), not top-level.
+function extractPhone(full) {
+  if (!full || typeof full !== "object") return "";
+  const participants = Array.isArray(full.participants) ? full.participants : [];
+  for (const p of participants) {
+    if (p && p.phone && String(p.phone).trim()) return String(p.phone).trim();
+  }
+  if (full.guardian && full.guardian.phone && String(full.guardian.phone).trim()) {
+    return String(full.guardian.phone).trim();
+  }
+  return "";
+}
+
 async function fetchWaiverSummaries({ templateId, fromDts, toDts, limit, offset }) {
   if (!SW_API_KEY) throw new Error("Missing SW_API_KEY (or SMARTWAIVER_API_KEY)");
 
@@ -99,8 +112,9 @@ async function upsertOutstandingAgreementFromWaiverSummary(summary) {
   }
 
   // Phone is only present on the full waiver, not the summary — enrich.
+  // It lives on a participant (adult signers) or on the guardian (minors), not top-level.
   const full = await fetchWaiverById(waiverId);
-  const phone = (full && full.phone ? String(full.phone) : "").trim();
+  const phone = extractPhone(full);
 
   await ensureSchema();
   const pool = getPool();
@@ -147,21 +161,6 @@ async function readJson(req) {
 
 module.exports = async function handler(req, res) {
   try {
-    // TEMP inspect: GET ?inspect=1 returns one full waiver record so we can locate the phone field.
-    if (req.query && req.query.inspect) {
-      const list = await fetchWaiverSummaries({
-        templateId: LIABILITY_WAIVER_ID,
-        fromDts: "",
-        toDts: "",
-        limit: 5,
-        offset: 0,
-      });
-      const first = Array.isArray(list.waivers) && list.waivers[0] ? list.waivers[0] : null;
-      if (!first) return json(res, 200, { inspect: true, note: "no waivers found", list });
-      const full = await fetchWaiverById(first.waiverId);
-      return json(res, 200, { inspect: true, fullWaiver: full });
-    }
-
     if (req.method !== "POST") return json(res, 405, { error: "Method Not Allowed" });
 
     if (!BACKFILL_TOKEN) {

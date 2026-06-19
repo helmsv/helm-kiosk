@@ -66,6 +66,19 @@ async function fetchWaiverById(waiverId) {
   return r.json().catch(() => null);
 }
 
+// Phone lives on a participant (adult signers) or on the guardian (minors), not top-level.
+function extractPhone(full) {
+  if (!full || typeof full !== "object") return "";
+  const participants = Array.isArray(full.participants) ? full.participants : [];
+  for (const p of participants) {
+    if (p && p.phone && String(p.phone).trim()) return String(p.phone).trim();
+  }
+  if (full.guardian && full.guardian.phone && String(full.guardian.phone).trim()) {
+    return String(full.guardian.phone).trim();
+  }
+  return "";
+}
+
 async function upsertOutstandingAgreementFromWaiver(waiver) {
   const waiverId = waiver.waiverId ? String(waiver.waiverId) : null;
   if (!waiverId) return { upserted: false, reason: "missing waiverId" };
@@ -79,7 +92,8 @@ async function upsertOutstandingAgreementFromWaiver(waiver) {
 
   const signerFirst = (waiver.firstName || waiver.signerFirstName || "").trim();
   const signerLast = (waiver.lastName || waiver.signerLastName || "").trim();
-  const phone = (waiver.phone || "").trim();
+  // Phone lives on a participant (adult signers) or the guardian (minors), not top-level.
+  const phone = extractPhone(waiver);
   const signedAtRaw = waiver.createdOn || waiver.createdAt || waiver.signedAt || null;
 
   if (!signerFirst && !signerLast) {
