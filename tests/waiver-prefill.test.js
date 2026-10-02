@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildIntakePrefill, buildLiabilityPrefill, safePrefillUrl, validDob, fieldList } = require('../lib/waiver-prefill');
+const { buildIntakePrefill, buildLiabilityPrefill, safePrefillUrl, validDob, fieldList, normalizePhone } = require('../lib/waiver-prefill');
 const def = (guid, label, fieldType = 'textbox', type = 'string') => ({ guid, label, fieldType, type });
 const adult = (extra = {}) => ({ firstName: 'Adult', lastName: 'Example', dob: '1990-04-17', isMinor: false, ...extra });
 const child = (extra = {}) => ({ firstName: 'Child', lastName: 'Example', dob: '2015-07-02', isMinor: true, ...extra });
@@ -40,12 +40,12 @@ test('adult maps full name, DOB, phone, common custom answers, address and emerg
   const before = JSON.stringify(w);
   const { payload } = buildLiabilityPrefill(w, source, target);
   assert.equal(payload.participants[0].dob, '1990-04-17');
-  assert.equal(payload.participants[0].phone, '555-0100');
+  assert.equal(payload.participants[0].phone, '5550100');
   assert.equal(payload.participants[0].customFields.targetweight13, '174');
   assert.equal(payload.participants[0].customFields.targetskier013, 'II');
   assert.equal(payload.customWaiverFields.targetaddress, '123 Example St');
   assert.equal(payload.addressLineOne, '123 Example St');
-  assert.equal(payload.emergencyContactPhone, '555-0101');
+  assert.equal(payload.emergencyContactPhone, '5550101');
   assert.equal(payload.lockdownPrefill, false);
   assert.equal(JSON.stringify(w), before, 'signed data is never mutated');
 });
@@ -127,4 +127,89 @@ test('array answers are explicitly reported for review rather than silently drop
   const result = buildLiabilityPrefill(w, s, t);
   assert.equal(result.payload.participants[0].customFields, undefined);
   assert.match(result.skippedFields[0], /Activities.*enter this answer/);
+});
+
+
+test('display-formatted phones preserve supplied country code and digits without invention', () => {
+  for (const [input, expected] of [
+    ['+1 (202) 555-0134', '+12025550134'],
+    [' +44 20 7946 0018 ', '+442079460018'],
+    ['202.555.0134', '2025550134'],
+    ['(202) 555-0134', '2025550134'],
+    ['+12025550134', '+12025550134'],
+    ['020 7946 0018', '02079460018'],
+  ]) assert.equal(normalizePhone(input), expected);
+  for (const input of ['+1 202 555 0134 ext 99', '+1 202 555 0134 x99', '202/555/0134', '++12025550134', '+1+2025550134', 'call me', '+0123456789', '+1234567890123456', 12025550134]) assert.equal(normalizePhone(input), '');
+});
+test('welcome adult and guardian normalize formatted phone without blocking a draft', () => {
+  for (const minors of [false, true]) {
+    const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134' });
+    const person = minors ? draft.payload.guardian : draft.payload.participants[0];
+    assert.equal(person.phone, '+12025550134');
+    assert.equal(draft.skippedFields.length, 0);
+    const invalid = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134 ext 9' });
+    assert.equal((minors ? invalid.payload.guardian : invalid.payload.participants[0]).phone, undefined);
+    assert.equal(invalid.payload.email, 'test@example.com');
+    assert.match(invalid.skippedFields[0], /Phone.*enter this phone number/);
+    assert.doesNotMatch(JSON.stringify(invalid.skippedFields), /202|0134|ext 9/);
+  }
+});
+test('UUID Lightspeed IDs retain the original auto_tag without an invalid externalId', () => {
+  const id = '01234567-89ab-cdef-0123-456789abcdef';
+  const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors: false, lightspeed_id: id });
+  assert.equal(draft.tag, `ls_${id}`);
+  assert.equal(draft.payload.externalId, undefined);
+  const url = new URL(safePrefillUrl('https://waiver.smartwaiver.com/p/abc123/', draft.tag, 'abc123'));
+  assert.equal(url.searchParams.get('auto_tag'), `ls_${id}`);
+  const compatible = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors: false, lightspeed_id: 'abc_123' });
+  assert.equal(compatible.payload.externalId, 'ls_abc_123');
+});
+test('liability normalizes each family and emergency phone without mutating signed data', () => {
+  const w = { ...waiver([child({ phone: '+1 (202) 555-0134' })]), guardian: { firstName: 'Guardian', lastName: 'Example', dob: '1980-01-01', phone: '+44 20 7946 0018' }, emergencyContactPhone: '(202) 555-0135' };
+  const before = JSON.stringify(w);
+  const result = buildLiabilityPrefill(w, source, target);
+  assert.equal(result.payload.participants[0].phone, '+12025550134');
+  assert.equal(result.payload.guardian.phone, '+442079460018');
+  assert.equal(result.payload.emergencyContactPhone, '2025550135');
+  assert.equal(JSON.stringify(w), before);
+  w.guardian.phone = '+1 (202) 555-0134 ext 9';
+  w.emergencyContactPhone = 'ask guardian';
+  const invalid = buildLiabilityPrefill(w, source, target);
+  assert.equal(invalid.payload.guardian.phone, undefined);
+  assert.equal(invalid.payload.emergencyContactPhone, undefined);
+  assert.equal(invalid.payload.participants[0].phone, '+12025550134');
+  assert.ok(invalid.skippedFields.some(x => x.startsWith('Guardian: Phone')));
+  assert.ok(invalid.skippedFields.some(x => x.startsWith('Waiver: Emergency contact phone')));
+});
+
+test('matched Lightspeed UUID and formatted mobile produce compatible prefill together', () => {
+  const input = { email: 'snowos-unsigned-test@example.com', dob: '1990-01-01', minors: false, first_name: 'SnowOS', last_name: 'Unsigned Test', mobile: '+1 (202) 555-0134', lightspeed_id: '01234567-89ab-cdef-0123-456789abcdef' };
+  const before = JSON.stringify(input);
+  const draft = buildIntakePrefill(input);
+  assert.equal(draft.payload.participants[0].phone, '+12025550134');
+  assert.equal(draft.payload.participants[0].firstName, 'SnowOS');
+  assert.equal(draft.payload.participants[0].dob, '1990-01-01');
+  assert.equal(draft.payload.email, input.email);
+  assert.equal(draft.payload.externalId, undefined);
+  assert.equal(draft.tag, `ls_${input.lightspeed_id}`);
+  assert.equal(new URL(safePrefillUrl('https://waiver.smartwaiver.com/p/abc123/', draft.tag, 'abc123')).searchParams.get('auto_tag'), `ls_${input.lightspeed_id}`);
+  assert.equal(JSON.stringify(input), before);
+});
+test('customer tags are never truncated or sanitized into another customer identity', () => {
+  const base = { email: 'test@example.com', dob: '1990-01-01', minors: false };
+  const first = buildIntakePrefill({ ...base, lightspeed_id: 'customer-id' });
+  const second = buildIntakePrefill({ ...base, lightspeed_id: 'customer_id' });
+  assert.notEqual(first.tag, second.tag);
+  assert.equal(first.tag, 'ls_customer-id');
+  assert.equal(second.tag, 'ls_customer_id');
+  assert.throws(() => buildIntakePrefill({ ...base, lightspeed_id: 'a'.repeat(62) }));
+  assert.throws(() => buildIntakePrefill({ ...base, lightspeed_id: 'customer id' }));
+});
+
+test('malformed optional phones are omitted and audited without object coercion', () => {
+  for (const mobile of [{ toString: null }, ['202', '555', '0134'], {}, true, 12025550134]) {
+    const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors: false, mobile });
+    assert.equal(draft.payload.participants[0].phone, undefined);
+    assert.match(draft.skippedFields[0], /Phone.*enter this phone number/);
+  }
 });

@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createPendingIntakeReader } = require('../lib/pending-intake-reader');
+const { buildIntakePrefill, buildLiabilityPrefill, safePrefillUrl } = require('../lib/waiver-prefill');
+const { pendingRows } = require('../rental-data');
 const fixture = require('./fixtures/intake.json');
 const start = Date.parse('2026-10-02T12:00:00Z');
 const input = { templateId: fixture.templateId, fromDts: '2026-10-02T00:00:00Z', toDts: '2026-10-03T00:00:00Z' };
@@ -24,6 +26,26 @@ function setup(waivers, options = {}) {
   };
   return { reader: createPendingIntakeReader({ request, now: () => time, policy: options.policy }), calls, advance(ms) { time += ms; } };
 }
+
+test('legacy and UUID Lightspeed tags survive intake prefill, signed rows and final participant linkage', async () => {
+  const ids = ['legacy_123', '00000000-0000-4000-8000-000000000000', '00000000000040008000000000000000'];
+  const tags = new Set();
+  for (const id of ids) {
+    const draft = buildIntakePrefill({ email:'fictional@example.invalid', dob:'1990-01-01', minors:false, lightspeed_id:id, mobile:'+1 (202) 555-0134' });
+    const url = new URL(safePrefillUrl('https://waiver.smartwaiver.com/p/synthetic-test/', draft.tag, 'synthetic-test'));
+    const tag = url.searchParams.get('auto_tag');
+    assert.equal(tag, `ls_${id}`);
+    tags.add(tag);
+    assert.equal(draft.payload.externalId, id.includes('-') ? undefined : `ls_${id}`);
+    const signed = waiver(undefined, { autoTag:tag });
+    const rows = (await setup([signed]).reader.read(input)).rows;
+    assert.ok(rows.every(row => row.lightspeed_id === id));
+    const finalDraft = buildLiabilityPrefill(signed, {}, {}, 1);
+    const remaining = pendingRows(rows, [{ autoTag:finalDraft.tag, createdOn:'2026-10-02T11:00:00Z' }]);
+    assert.deepEqual(remaining.map(row => row.participant_index), [0]);
+  }
+  assert.equal(tags.size, ids.length, 'UUID punctuation is never stripped or encoded into a colliding tag');
+});
 
 test('reader requires an explicit server client and does not issue implicit fetches', () => {
   assert.throws(() => createPendingIntakeReader(), /Inject/);
