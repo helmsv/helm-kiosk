@@ -1,0 +1,22 @@
+{
+  "waiverId": "synthetic_intake_A",
+  "templateId": "synthetic_intake_template",
+  "email": "synthetic-family@example.invalid",
+  "participants": [
+    { "firstName": "Adult", "lastName": "Example", "dob": "1985-10-03", "isMinor": false,
+      "customParticipantFields": {
+        "weight_field_1": { "displayText": "Weight (lbs)", "value": "180" },
+        "height_field_1": { "displayText": "Height", "value": "5' 11\"" },
+        "skier_field_1": { "displayText": "Skier Type", "value": "Type III - Aggressive" }
+      }
+    },
+    { "firstName": "Child", "lastName": "Example", "dob": "2017-10-02", "isMinor": true,
+      "customParticipantFields": {
+        "weight_field_1": { "displayText": "Weight (kg)", "value": "30" },
+        "height_field_1": { "displayText": "Height (cm)", "value": "130" },
+        "skier_field_1": { "displayText": "Skier Type", "value": "I" }
+      }
+    }
+  ],
+  "customWaiverFields": { "ambiguous_weight": { "displayText": "Weight", "value": "999" } }
+}

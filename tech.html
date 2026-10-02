@@ -82,6 +82,8 @@
       <div id="dinBody" class="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div class="border rounded-2xl p-4">
           <h4 class="font-semibold mb-2">Participant Measurements</h4>
+          <label class="block text-xs text-gray-700 mb-1" for="dinParticipant">Participant on this intake</label>
+          <select id="dinParticipant" class="select mb-3"></select>
           <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <dt class="text-gray-500">Participant</dt><dd id="i_name" class="font-medium">—</dd>
             <dt class="text-gray-500">Email</dt><dd id="i_email" class="font-medium">—</dd>
@@ -106,7 +108,8 @@
               <label class="block text-xs text-gray-700 mb-1">Skier Type</label>
               <select id="inp_type" class="select">
                 <option value="I">Type I</option>
-                <option value="II" selected>Type II</option>
+                <option value="" selected>Select skier type</option>
+                <option value="II">Type II</option>
                 <option value="III">Type III</option>
               </select>
             </div>
@@ -173,6 +176,7 @@
     </div>
   </div>
 
+  <script src="/rental-data.js"></script>
   <script>
     let LIABILITY_WAIVER_ID = "";
     const REFRESH_MS = 3000;
@@ -225,7 +229,7 @@
       const toKey   = (toDateEl.value   || '').slice(0,10);
       return (key >= fromKey && key <= toKey);
     }
-    function toCm(totalIn){ const n=Number(totalIn); return Number.isFinite(n)? Math.round(n*2.54):""; }
+    function toCm(totalIn){ const n=RentalData.finiteNumber(totalIn); return n != null ? Math.round(n*2.54):""; }
 
     // --- Skier type sanitizer ---
     function normalizeSkierType(v){
@@ -323,7 +327,7 @@
 
         // Use server proxy for PDF (no 404 public page issues)
         const pdfHref = r.waiver_id ? `/api/waiver-pdf?waiverId=${encodeURIComponent(r.waiver_id)}` : "";
-        const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener">Open PDF</a>` : "—";
+        const pdfCell = pdfHref ? `<a class="link" href="${pdfHref}" target="_blank" rel="noopener noreferrer" title="Opens the signed intake in Smartwaiver; staff login may be required">Open First Signed Waiver</a>` : "—";
         const hiddenPill = hidden && showHidden ? `<span class="pill">Hidden</span>` : "";
 
         tr.innerHTML = `
@@ -351,6 +355,8 @@
               <button
                 class="btn"
                 data-action="liab"
+                data-intake="${r.waiver_id || ''}"
+                data-pindex="${r.participant_index ?? 0}"
                 data-email="${r.email || ''}"
                 data-lsid="${r.lightspeed_id || ''}"
                 data-first="${r.first_name || ''}"
@@ -384,11 +390,29 @@
 
             if (action === "din") {
               if (!waiverId) { showToast("No intake ID on row."); return; }
+              const requestId = ++dinRequestId;
+              current = null;
+              dinModal.classList.add("hidden");
+              dinModal.classList.remove("flex");
               try {
                 const details = await fetchIntakeDetails(waiverId);
-                const p = pickParticipant(details, pindex);
+                const p = pickParticipant(details, pindex, waiverId);
+                if (requestId !== dinRequestId) return;
 
+                activeIntakeDetails = details;
+                activeIntakeMeta = { lightspeed_id: lsid, waiver_id: waiverId };
+                const participantSelect = document.getElementById("dinParticipant");
+                participantSelect.replaceChildren();
+                for (const person of details.participants) {
+                  const option = document.createElement("option");
+                  option.value = String(person.participant_index);
+                  option.textContent = [person.first_name, person.last_name].filter(Boolean).join(" ") || `Participant ${person.participant_index + 1}`;
+                  participantSelect.appendChild(option);
+                }
+                participantSelect.value = String(pindex);
                 const merged = {
+                  waiver_id:    waiverId,
+                  participant_index: pindex,
                   email:        p.email        ?? (email || ""),
                   first_name:   p.first_name   ?? first,
                   last_name:    p.last_name    ?? last,
@@ -398,11 +422,9 @@
                   skier_type:   normalizeSkierType(p.skier_type || "")
                 };
 
-                const prior = await fetchLatestLiability({ tag: lsid ? `ls_${lsid}` : "", email: merged.email });
-                openDINModal(merged, { email: merged.email, lightspeed_id: lsid, first_name: merged.first_name, last_name: merged.last_name }, prior);
+                openDINModal(merged, { email: merged.email, lightspeed_id: lsid, first_name: merged.first_name, last_name: merged.last_name });
               } catch (e) {
-                console.error(e);
-                showToast("Could not load intake or prior liability.");
+                if (requestId === dinRequestId) showToast(e.message || "Could not load the selected intake.");
               }
               return;
             }
@@ -457,7 +479,7 @@
     }
 
     // ----- participant extraction helpers for DIN -----
-    function finNum(v){ const n = Number(v); return Number.isFinite(n) ? n : null; }
+    const finNum = RentalData.finiteNumber;
     function ageFromDob(dob){
       if (!dob) return null;
       const m = String(dob).match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -468,21 +490,8 @@
       const hasnt = (now.getMonth() < b.getMonth()) || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate());
       return hasnt ? a-1 : a;
     }
-    function pickParticipant(details, pindex){
-      // Expect details.participants with normalized metrics from API; still merge defensively.
-      const arr = Array.isArray(details?.participants) ? details.participants : [];
-      const p = arr.find(pp => Number(pp.participant_index) === Number(pindex)) || arr[pindex] || arr[0] || {};
-      const out = {
-        participant_index: p.participant_index ?? 0,
-        first_name: p.first_name || '',
-        last_name : p.last_name  || '',
-        email     : p.email      || details?.email || '',
-        age       : finNum(p.age) ?? ageFromDob(p.dob),
-        weight_lb : finNum(p.weight_lb),
-        height_in : finNum(p.height_in),
-        skier_type: p.skier_type ? normalizeSkierType(p.skier_type) : ''
-      };
-      return out;
+    function pickParticipant(details, pindex, waiverId){
+      return RentalData.pickParticipant(details, pindex, waiverId);
     }
 
     // -----------------------
@@ -627,7 +636,9 @@
     function codeFromHeightCm(cm){for(const r of CODE_BY_HEIGHT_CM)if(cm<=r.max)return r.code;return 0;}
     const BSL_BANDS=["<231","231–250","251–270","271–290","291–310","311–330",">350"];
     function computeDIN({weight_lb,height_in,age_years,skierType,bsl_mm,basis="auto",ageAdj="auto"}){
-      const w=Number(weight_lb); if(!Number.isFinite(w))return{din:null,code:"",band:"",explain:"Missing weight"};
+      const missing = RentalData.missingDinInputs({ weight_lb, height_in, age_years, skierType, bsl_mm });
+      if (missing.length) return { din:null, code:"", band:"", explain:`Confirm ${missing.join(", ")} before calculating.` };
+      const w=Number(weight_lb);
       const totalIn=Number(height_in); const h_cm=Number.isFinite(totalIn)?totalIn*2.54:NaN;
       const codeW=codeFromWeightLbs(w);
       const codeH=Number.isFinite(h_cm)?codeFromHeightCm(h_cm):codeW;
@@ -659,6 +670,8 @@
     const inpBasis=()=>document.getElementById("inp_basis");
     const bslHint=()=>document.getElementById("bsl_hint");
     let current=null;
+    let dinRequestId=0;
+    let activeIntakeDetails=null, activeIntakeMeta=null;
 
     function reflectBaseDin(val){
       const s=(val==null||!Number.isFinite(val))?"—":Number(val).toFixed(2);
@@ -676,17 +689,20 @@
         ageAdj: inpAgeAdj().value
       });
       reflectBaseDin(res.din);
-      outSum().textContent = (res.din==null) ? "" : `Skier code ${res.code}, ${res.explain}`;
+      outSum().textContent = (res.din==null) ? res.explain : `Skier code ${res.code}, ${res.explain}`;
+      document.getElementById("btnCopy").disabled = res.din == null;
     }
-    function openDINModal(p, meta, prior){
+    function openDINModal(p, meta){
       current = {
+        waiver_id: p.waiver_id,
+        participant_index: p.participant_index,
         email:        meta.email || p.email || "",
         lightspeed_id:meta.lightspeed_id || "",
         first_name:   p.first_name || meta.first_name || "",
         last_name:    p.last_name  || meta.last_name  || "",
-        age:          Number(p.age) || (p.dob ? ageFromDob(p.dob) : NaN),
-        weight_lb:    Number(p.weight_lb) || NaN,
-        height_in:    Number(p.height_in) || NaN,
+        age:          finNum(p.age),
+        weight_lb:    finNum(p.weight_lb),
+        height_in:    finNum(p.height_in),
         skier_type:   normalizeSkierType(p.skier_type || "")
       };
       document.getElementById("i_name").textContent   = [current.first_name,current.last_name].filter(Boolean).join(" ") || "—";
@@ -698,21 +714,17 @@
       document.getElementById("i_skier").textContent  = displaySkier(current.skier_type);
 
       inpBSL().value = "";
-      inpType().value = current.skier_type || "II";
+      inpType().value = current.skier_type || "";
       inpAgeAdj().value = "auto";
       inpBasis().value = "weight";
-      bslHint().textContent = "";
-      if (prior && prior.bsl_mm) {
-        inpBSL().value = prior.bsl_mm;
-        bslHint().textContent = `Found previous BSL ${prior.bsl_mm} mm${prior.signed_on ? ` (${new Date(prior.signed_on).toLocaleString()})` : ""}.`;
-      }
+      bslHint().textContent = "Enter the measured sole length of the boot being fitted. Previous rentals are not used.";
       reflectBaseDin(null);
       outSum().textContent = "";
       dinModal.classList.remove("hidden");
       dinModal.classList.add("flex");
       computeAndRender();
     }
-    dinClose.addEventListener("click", ()=>{ dinModal.classList.add("hidden"); dinModal.classList.remove("flex"); current = null; });
+    dinClose.addEventListener("click", ()=>{ dinRequestId++; dinModal.classList.add("hidden"); dinModal.classList.remove("flex"); current = null; });
     ["change","keyup","input"].forEach(evt=>{
       inpBSL().addEventListener(evt, computeAndRender);
       inpType().addEventListener(evt, computeAndRender);
@@ -721,8 +733,16 @@
     });
     document.getElementById("btnCopy").addEventListener("click", async ()=>{
       const s = outDin().textContent;
+      if (s === "—" || !current) return;
       const txt = `DIN ${s} — L Toe ${outLT().textContent}, L Heel ${outLH().textContent}, R Toe ${outRT().textContent}, R Heel ${outRH().textContent}. ${outSum().textContent}`;
       try { await navigator.clipboard.writeText(txt); showToast("DIN set copied"); } catch { showToast("Copy failed"); }
+    });
+    document.getElementById("dinParticipant").addEventListener("change", (event)=>{
+      if (!activeIntakeDetails || !activeIntakeMeta) return;
+      try {
+        const p = pickParticipant(activeIntakeDetails, Number(event.target.value), activeIntakeMeta.waiver_id);
+        openDINModal({ ...p, waiver_id: activeIntakeMeta.waiver_id }, { ...activeIntakeMeta, email: p.email });
+      } catch (error) { showToast(error.message); }
     });
     document.getElementById("btnOpenLiab").addEventListener("click", ()=>{
       if (!current) return;
