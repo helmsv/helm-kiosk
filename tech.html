@@ -177,9 +177,10 @@
             </div>
           </div>
 
+          <p id="skierTypeReviewNotice" class="tiny" hidden></p>
           <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px;font-size:13px">
             <input id="reviewTechnician" type="checkbox" style="width:auto;min-height:0;margin-top:3px">
-            <span>I reviewed this participant, the measured boot sole length, skier code and calculated DIN against current shop procedures.</span>
+            <span>I reviewed this participant, the selected skier type, measured boot sole length, skier code and calculated DIN against current shop procedures.</span>
           </label>
           <p class="tiny">The reviewed code, DIN and boot sole length will be copied. Enter the final indicator settings separately on the final waiver.</p>
           <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
@@ -681,16 +682,21 @@
     }
     function computeAndRender(){
       if(!current) return;
+      const skierType = inpType().value;
       const res = computeDIN({
         weight_lb: current.weight_lb,
         height_in: current.height_in,
         age_years: current.age,
-        skierType: inpType().value,
+        skierType,
         bsl_mm: Number(inpBSL().value),
         basis: inpBasis().value,
         ageAdj: inpAgeAdj().value
       });
-      current.calculation=res.din == null ? null : {skierCode:res.code,din:res.din,bootSoleLengthMm:Number(inpBSL().value)};
+      current.calculation=res.din == null ? null : {skierCode:res.code,din:res.din,bootSoleLengthMm:Number(inpBSL().value),skierType};
+      const typeNotice = document.getElementById('skierTypeReviewNotice');
+      const changedType = ['I','II','III'].includes(skierType) && skierType !== current.skier_type;
+      typeNotice.hidden = !changedType;
+      typeNotice.textContent = changedType ? `${current.skier_type ? 'The selected skier type differs from the intake.' : 'The intake has no mapped skier type; this calculation uses your selection.'} Confirm the classification and review the final-waiver details, including any skier-type answer if present. The signed intake is unchanged.` : '';
       document.getElementById('reviewTechnician').checked=false;
       document.getElementById('btnOpenLiab').disabled=true;
       reflectBaseDin(res.din);

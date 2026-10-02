@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const enumContracts = require('./fixtures/technician-enum-contract')(['synthetic_final_template']);
 const { buildTechnicianPrefill, isTechnicianFieldLabel } = require('../lib/technician-prefill');
 const { buildLiabilityPrefill } = require('../lib/waiver-prefill');
 const { normalizeIntake } = require('../lib/intake-normalize');
@@ -8,7 +9,7 @@ const { normalizeIntake } = require('../lib/intake-normalize');
 const labels = ['Skier Code', 'DIN', 'Boot Sole Length (mm)', 'Final Indicator Setting: Left Toe', 'Final Indicator Setting: Left Heel', 'Final Indicator Setting: Right Toe', 'Final Indicator Setting: Right Heel'];
 const def = (guid, label, fieldType = 'textbox', type = 'string') => ({ guid, label, fieldType, type });
 function template(scope = 'participant') {
-  return { [scope === 'participant' ? 'customParticipantFields' : 'customFields']: labels.map((label, i) => def(`synthetic_final_${i}`, label, i === 1 ? 'optionlist' : i >= 2 ? 'numerictextbox' : 'textbox', i === 1 ? 'enum' : i >= 2 ? 'number' : 'string')) };
+  return { templateId: 'synthetic_final_template', publishedVersion: 1, [scope === 'participant' ? 'customParticipantFields' : 'customFields']: labels.map((label, i) => def(`synthetic_final_${i}`, label, i === 1 ? 'optionlist' : i >= 2 ? 'numerictextbox' : 'textbox', i === 1 ? 'enum' : i >= 2 ? 'number' : 'string')) };
 }
 const sourceTemplate = { customParticipantFields: [def('source_weight', 'Weight'), def('source_height', 'Height (in)'), def('source_type', 'Skier Type', 'optionlist', 'enum')] };
 function participant(firstName = 'Sample', dob = '1990-04-17', isMinor = false) {
@@ -215,8 +216,8 @@ test('source records stay unchanged; final name, email and reviewed values are e
 
 test('both documented participant metadata spellings and GUID-keyed dictionaries resolve without hardcoded IDs', () => {
   const w = waiver(), r = review(w), fields = template().customParticipantFields;
-  const alternate = { participantCustomFields: fields };
+  const alternate = { templateId: 'synthetic_final_template', publishedVersion: 1, participantCustomFields: fields };
   assert.equal(buildTechnicianPrefill(w, alternate, 0, r).participantFields.synthetic_final_1, '6.00');
-  const dictionary = { participantCustomFields: Object.fromEntries(fields.map(({ guid, ...rest }) => [guid, rest])) };
+  const dictionary = { templateId: 'synthetic_final_template', publishedVersion: 1, participantCustomFields: Object.fromEntries(fields.map(({ guid, ...rest }) => [guid, rest])) };
   assert.equal(buildTechnicianPrefill(w, dictionary, 0, r).participantFields.synthetic_final_1, '6.00');
 });

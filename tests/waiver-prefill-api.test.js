@@ -1,10 +1,11 @@
 const test=require('node:test'),assert=require('node:assert/strict');
+require('./fixtures/technician-enum-contract')(['liability_template']);
 const {normalizeIntake}=require('../lib/intake-normalize');
 const req=body=>({method:'POST',headers:{host:'kiosk.example',origin:'https://kiosk.example','content-type':'application/json',authorization:'Bearer staff.test.jwt'},body});
 function res(){return{headers:{},statusCode:200,setHeader(k,v){this.headers[k]=v},status(n){this.statusCode=n;return this},json(body){this.body=body;return this}};}
 const person={firstName:'Synthetic',lastName:'Example',dob:'1990-01-01',isMinor:false,customParticipantFields:{w:{displayText:'Weight',value:'180'},h:{displayText:'Height',value:'71'},s:{displayText:'Skier Type: (Check One)',value:'II'}}};
 const waiver={waiverId:'synthetic_intake_001',templateId:'intake_template',email:'sample@example.invalid',participants:[person]};
-const definitions={intake_template:{templateId:'intake_template',title:'Synthetic intake',customParticipantFields:[]},liability_template:{templateId:'liability_template',title:'Synthetic final',customFields:[{guid:'code_target',label:'Skier Code',fieldType:'textbox',type:'string'},{guid:'din_target',label:'DIN',fieldType:'optionlist',type:'enum'},{guid:'bsl_target',label:'Boot Sole Length (mm)',fieldType:'numerictextbox',type:'number'}]}};
+const definitions={intake_template:{templateId:'intake_template',title:'Synthetic intake',customParticipantFields:[]},liability_template:{templateId:'liability_template',publishedVersion:1,title:'Synthetic final',customFields:[{guid:'code_target',label:'Skier Code',fieldType:'textbox',type:'string'},{guid:'din_target',label:'DIN',fieldType:'optionlist',type:'enum'},{guid:'bsl_target',label:'Boot Sole Length (mm)',fieldType:'numerictextbox',type:'number'}]}};
 const review=()=>{const p=normalizeIntake(waiver).participants[0];return{reviewed:true,waiverId:waiver.waiverId,participantIndex:0,participant:{first_name:p.first_name,last_name:p.last_name},source:{weight_lb:p.weight_lb,height_in:p.height_in,age:p.age,skier_type:p.skier_type},calculated:{skierCode:'M',din:7,bootSoleLengthMm:315}}};
 test('protected prefill/metadata lifecycle and synthetic preview never bypass staff or edit a signed waiver',async()=>{
  const oldFetch=global.fetch,env={...process.env};process.env.SW_API_KEY='server-only-synthetic';process.env.INTAKE_WAIVER_ID='intake_template';process.env.LIABILITY_WAIVER_ID='liability_template';

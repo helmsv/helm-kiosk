@@ -4,14 +4,27 @@ const { requireStaff } = require('../lib/staff-auth');
 const { buildIntakePrefill, buildLiabilityPrefill, safePrefillUrl, fieldList } = require('../lib/waiver-prefill');
 const { normalizeIntake } = require('../lib/intake-normalize');
 const templateCache = new Map();
+const OPERATIONS = new Set(['intake-read', 'intake-template', 'liability-template', 'prefill-build', 'prefill-create', 'prefill-response']);
 
-async function template(id) {
+async function during(operation, action) {
+  try { return await action(); }
+  catch (error) {
+    // These names are fixed at our call sites, not derived from input or URLs.
+    error.operation = operation === 'prefill-create' && Number.isInteger(error.upstreamStatus) && error.upstreamStatus >= 200 && error.upstreamStatus <= 299
+      ? 'prefill-response' : operation;
+    throw error;
+  }
+}
+
+async function template(id, operation, { fresh = false } = {}) {
   const cached = templateCache.get(id);
-  if (cached && cached.until > Date.now()) return cached.value;
-  const data = await sw.request(`/templates/${encodeURIComponent(id)}?customFields=true`);
-  if (!data.template || data.template.templateId !== id) throw new Error('Smartwaiver template could not be verified.');
-  templateCache.set(id, { value: data.template, until: Date.now() + 60000 });
-  return data.template;
+  if (!fresh && cached && cached.until > Date.now()) return cached.value;
+  return during(operation, async () => {
+    const data = await sw.request(`/templates/${encodeURIComponent(id)}?customFields=true`);
+    if (!data.template || data.template.templateId !== id) throw new Error('Smartwaiver template could not be verified.');
+    templateCache.set(id, { value: data.template, until: Date.now() + 60000 });
+    return data.template;
+  });
 }
 
 module.exports = async function handler(req, res) {
@@ -37,39 +50,48 @@ module.exports = async function handler(req, res) {
     if (!intakeId || (staffStage && !liabilityId)) return res.status(503).json({ error: 'Smartwaiver templates are not configured.' });
     let draft, templateId;
     if(input.stage === 'template-check') {
-      const definitions=await Promise.all([template(intakeId),template(liabilityId)]);
+      const definitions=await Promise.all([template(intakeId, 'intake-template'),template(liabilityId, 'liability-template')]);
       const summarize=definition=>({title:definition.title||'',publishedVersion:definition.publishedVersion,participantFields:fieldList(definition,true).map(({label,fieldType,type})=>({label,fieldType,type})),waiverFields:fieldList(definition,false).map(({label,fieldType,type})=>({label,fieldType,type}))});
       return res.status(200).json({templates:definitions.map(summarize)});
     }
 
     if (input.stage === 'intake') {
-      draft = buildIntakePrefill(input);
+      draft = await during('prefill-build', () => buildIntakePrefill(input));
       templateId = intakeId;
     } else if(input.stage === 'synthetic-preview') {
       // Fixed, conspicuously synthetic data only; never reads a signed record.
-      const [intake,liability]=await Promise.all([template(intakeId),template(liabilityId)]);
+      // Version-bound dropdown contracts must see fresh destination metadata.
+      // This does not make the provider's later prefill creation atomic.
+      const [intake,liability]=await Promise.all([template(intakeId, 'intake-template'),template(liabilityId, 'liability-template', { fresh: true })]);
       const waiver={waiverId:'synthetic_snowos_preview',templateId:intakeId,email:'snowos-unsigned-test@example.invalid',participants:[{firstName:'SnowOS',lastName:'Unsigned Test',dob:'1990-01-01',isMinor:false,customParticipantFields:{w:{displayText:'Weight (lbs)',value:'180'},h:{displayText:'Height (in)',value:'71'},s:{displayText:'Skier Type: (Check One)',value:'II'}}}]};
       const participant=normalizeIntake(waiver).participants[0];
       const review={reviewed:true,waiverId:waiver.waiverId,participantIndex:0,participant:{first_name:participant.first_name,last_name:participant.last_name},source:{weight_lb:participant.weight_lb,height_in:participant.height_in,age:participant.age,skier_type:participant.skier_type},calculated:{skierCode:'M',din:'7',bootSoleLengthMm:315}};
-      draft=buildLiabilityPrefill(waiver,intake,liability,0,review);templateId=liabilityId;
+      draft=await during('prefill-build', () => buildLiabilityPrefill(waiver,intake,liability,0,review));templateId=liabilityId;
     } else if (input.stage === 'liability') {
       if (typeof input.waiverId !== 'string' || !/^[a-zA-Z0-9_-]{6,128}$/.test(input.waiverId)) return res.status(400).json({ error: 'A valid intake ID is required.' });
       const [data, intake, liability] = await Promise.all([
-        sw.request(`/waivers/${encodeURIComponent(input.waiverId)}`), template(intakeId), template(liabilityId),
+        during('intake-read', () => sw.request(`/waivers/${encodeURIComponent(input.waiverId)}`)), template(intakeId, 'intake-template'), template(liabilityId, 'liability-template', { fresh: true }),
       ]);
-      if (!data.waiver || data.waiver.waiverId !== input.waiverId || data.waiver.templateId !== intakeId) return res.status(400).json({ error: 'The selected waiver is not this kiosk’s intake template.' });
-      draft = buildLiabilityPrefill(data.waiver, intake, liability, input.participantIndex ?? 0, input.technicianReview);
+      const matchesIntake = await during('intake-read', () => data.waiver && data.waiver.waiverId === input.waiverId && data.waiver.templateId === intakeId);
+      if (!matchesIntake) return res.status(400).json({ error: 'The selected waiver is not this kiosk’s intake template.' });
+      draft = await during('prefill-build', () => buildLiabilityPrefill(data.waiver, intake, liability, input.participantIndex ?? 0, input.technicianReview));
       templateId = liabilityId;
     } else return res.status(400).json({ error: 'Choose intake or liability.' });
     if (staffStage) await requireStaff(req);
-    const result = await sw.request(`/templates/${encodeURIComponent(templateId)}/prefill`, { method: 'POST', body: draft.payload });
-    if (typeof result.prefill?.uuid !== 'string' || !result.prefill.uuid) throw new Error('Missing Smartwaiver prefill ID.');
-    const url = safePrefillUrl(result.prefill.url, draft.tag, result.prefill.uuid);
+    const result = await during('prefill-create', () => sw.request(`/templates/${encodeURIComponent(templateId)}/prefill`, { method: 'POST', body: draft.payload }));
+    const url = await during('prefill-response', () => {
+      if (typeof result.prefill?.uuid !== 'string' || !result.prefill.uuid) throw new Error('Missing Smartwaiver prefill ID.');
+      return safePrefillUrl(result.prefill.url, draft.tag, result.prefill.uuid);
+    });
     return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, reviewRequired: true });
   } catch (error) {
     const status = [401,403,503].includes(error.status) ? error.status : error instanceof SyntaxError ? 400 : error.statusCode === 400 ? 400 : error.status === 429 || error.statusCode === 429 ? 429 : 502;
     // Validation messages are ours. Upstream bodies can contain customer details.
     const message = [401,403,503].includes(error.status) ? error.message : error instanceof SyntaxError ? 'Invalid JSON request.' : error.statusCode === 400 ? error.message : 'Unable to prepare Smartwaiver right now. Please try again; no waiver has been signed.';
-    return res.status(status).json({ error: message });
+    const operation = OPERATIONS.has(error.operation) ? error.operation : '';
+    const upstreamStatus = Number.isInteger(error.upstreamStatus) && error.upstreamStatus >= 100 && error.upstreamStatus <= 599 ? error.upstreamStatus : null;
+    const reference = operation ? ` [${operation}${upstreamStatus === null ? '' : `; HTTP ${upstreamStatus}`}]` : '';
+    if (status === 429 && Number.isSafeInteger(error.retryAfterSeconds) && error.retryAfterSeconds > 0) res.setHeader('Retry-After', String(error.retryAfterSeconds));
+    return res.status(status).json({ error: message + reference });
   }
 };
