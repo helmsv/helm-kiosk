@@ -45,13 +45,14 @@
     }
     textarea { font-family: inherit; }
   </style>
+  <link rel="stylesheet" href="/rental-mobile.css">
   <script src="/nav.js" defer></script>
 </head>
-<body>
+<body class="rental-page rental-returns">
   <div class="wrap">
     <h1>Rental Returns</h1>
     <div class="card">
-      <div class="row">
+      <div class="rental-filters row">
         <div>
           <label for="name">Signer name (first, last, or both)</label>
           <input id="name" type="text" placeholder="e.g., Gary Hohl" />
@@ -78,8 +79,8 @@
         <span class="right muted" id="count"></span>
       </div>
 
-      <table>
-        <thead id="thead">
+      <table class="rental-table" role="table" aria-label="Rental returns">
+        <thead id="thead" role="rowgroup">
           <tr>
             <th>Signed</th>
             <th>Signer</th>
@@ -90,12 +91,12 @@
             <th></th>
           </tr>
         </thead>
-        <tbody id="rows">
+        <tbody id="rows" role="rowgroup">
           <tr><td colspan="7" class="muted">Adjust filters to see rentals.</td></tr>
         </tbody>
       </table>
 
-      <div class="row" style="margin-top: 12px;">
+      <div class="rental-export row" style="margin-top: 12px;">
         <div>
           <label for="exportFrom">Export from</label>
           <input id="exportFrom" type="date" />
@@ -129,7 +130,7 @@
           style="padding:10px;border:1px solid #ccc;border-radius:8px;resize:vertical;"></textarea>
       </div>
 
-      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
+      <div class="rental-dialog-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
         <button type="button" id="cancelReturnBtn">Cancel</button>
         <button type="submit" class="primary" id="confirmReturnBtn">Confirm return</button>
       </div>
@@ -148,17 +149,25 @@
           style="padding:10px;border:1px solid #ccc;border-radius:8px;resize:vertical;"></textarea>
       </div>
 
-      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
+      <div class="rental-dialog-actions" style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
         <button type="button" id="cancelNoteBtn">Cancel</button>
         <button type="submit" class="primary" id="saveNoteBtn">Save note</button>
       </div>
     </form>
   </dialog>
 
+<script src="/staff-session.js"></script>
 <script>
   const el = (id) => document.getElementById(id);
 
   function setToast(msg) { el("toast").textContent = msg || ""; }
+
+  // Customer names, notes and API errors are text, never executable markup.
+  function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
+  }
 
   function fmtDate(iso) {
     try {
@@ -174,8 +183,8 @@
     if (!raw) return "";
     // Keep a leading + (country code) and digits only for the dial target.
     const dial = raw.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
-    if (!dial.replace(/\D/g, "")) return raw; // no digits — show as-is, not dialable
-    const display = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    if (!dial.replace(/\D/g, "")) return escapeHTML(raw); // no digits — show as text, not dialable
+    const display = escapeHTML(raw);
     // dial is already sanitized to [0-9+]; pass it literally so the scheme
     // matches Zoom's documented format (zoomphonecall://+15551234567).
     return `<a href="zoomphonecall://${dial}" title="Call with Zoom Phone">${display}</a>`;
@@ -206,6 +215,7 @@
     searchTimer = setTimeout(() => search(), 250);
   }
 
+  const dialogCleanups = new Map();
   async function openReturnDialog(defaultDateYMD) {
     return new Promise((resolve) => {
       const dlg = el("returnDialog");
@@ -215,14 +225,22 @@
       el("returnDate").value = defaultDateYMD || "";
       el("returnComment").value = "";
 
+      const previous = dialogCleanups.get(dlg); if (previous) previous(null);
+      let settled = false;
       function cleanup(result) {
+        if (settled) return; settled = true;
         cancelBtn.removeEventListener("click", onCancel);
         form.removeEventListener("submit", onSubmit);
+        dlg.removeEventListener('cancel', onNativeCancel);
+        dlg.removeEventListener('close', onNativeClose);
+        if (dialogCleanups.get(dlg) === cleanup) dialogCleanups.delete(dlg);
         if (dlg.open) dlg.close();
         resolve(result);
       }
-
       function onCancel() { cleanup(null); }
+      function onNativeCancel(event) { event.preventDefault(); cleanup(null); }
+      function onNativeClose() { if (!dlg.open) cleanup(null); }
+      dialogCleanups.set(dlg, cleanup);
 
       function onSubmit(e) {
         e.preventDefault();
@@ -237,7 +255,8 @@
 
       cancelBtn.addEventListener("click", onCancel);
       form.addEventListener("submit", onSubmit);
-
+      dlg.addEventListener('cancel', onNativeCancel);
+      dlg.addEventListener('close', onNativeClose);
       dlg.showModal();
     });
   }
@@ -250,14 +269,22 @@
 
       el("noteText").value = existingNote || "";
 
+      const previous = dialogCleanups.get(dlg); if (previous) previous(null);
+      let settled = false;
       function cleanup(result) {
+        if (settled) return; settled = true;
         cancelBtn.removeEventListener("click", onCancel);
         form.removeEventListener("submit", onSubmit);
+        dlg.removeEventListener('cancel', onNativeCancel);
+        dlg.removeEventListener('close', onNativeClose);
+        if (dialogCleanups.get(dlg) === cleanup) dialogCleanups.delete(dlg);
         if (dlg.open) dlg.close();
         resolve(result);
       }
-
       function onCancel() { cleanup(null); }
+      function onNativeCancel(event) { event.preventDefault(); cleanup(null); }
+      function onNativeClose() { if (!dlg.open) cleanup(null); }
+      dialogCleanups.set(dlg, cleanup);
 
       function onSubmit(e) {
         e.preventDefault();
@@ -266,7 +293,8 @@
 
       cancelBtn.addEventListener("click", onCancel);
       form.addEventListener("submit", onSubmit);
-
+      dlg.addEventListener('cancel', onNativeCancel);
+      dlg.addEventListener('close', onNativeClose);
       dlg.showModal();
     });
   }
@@ -296,10 +324,12 @@
     tbody.innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
 
     try {
-      const r = await fetch(`/api/rentals-outstanding?${qs.toString()}`, { signal: controller.signal });
+      const r = await StaffSession.fetch(`/api/rentals-outstanding?${qs.toString()}`, { signal: controller.signal });
       const data = await r.json();
+      if (!StaffSession.isReady()) return;
       if (!r.ok) throw new Error(data.error || "Search failed");
 
+      if (controller.signal.aborted) return;
       const rentals = data.rentals || [];
       el("count").textContent = rentals.length ? `${rentals.length} records` : "";
 
@@ -311,6 +341,7 @@
       tbody.innerHTML = "";
       for (const a of rentals) {
         const tr = document.createElement("tr");
+        tr.setAttribute("role", "row");
         const signer = `${a.signer_first} ${a.signer_last}`.trim();
 
         const status = (a.status || "").toString();
@@ -318,18 +349,19 @@
         const canReturn = status === "OUT";
 
         const note = (a.note || "").toString();
-        const safeNote = note.replace(/"/g, "&quot;");
+        const safeNote = escapeHTML(note);
+        const safeId = escapeHTML(a.id);
 
         tr.innerHTML = `
-          <td>${fmtDate(a.signed_at)}</td>
-          <td>${signer}</td>
-          <td>${phoneCell(a.phone)}</td>
-          <td>${a.id}</td>
-          <td>${status}</td>
-          <td>${returnedAt}</td>
-          <td class="actions">
-            ${canReturn ? `<button data-action="return" data-id="${a.id}" class="primary">Return</button>` : `<span class="muted">—</span>`}
-            <button data-action="note" data-id="${a.id}" data-note="${safeNote}">Note</button>
+          <td role="cell" data-label="Signed"><span>${escapeHTML(fmtDate(a.signed_at))}</span></td>
+          <td role="cell" data-label="Signer"><span>${escapeHTML(signer)}</span></td>
+          <td role="cell" data-label="Phone"><span>${phoneCell(a.phone)}</span></td>
+          <td role="cell" data-label="Agreement"><span>${safeId}</span></td>
+          <td role="cell" data-label="Status"><span>${escapeHTML(status)}</span></td>
+          <td role="cell" data-label="Returned"><span>${escapeHTML(returnedAt)}</span></td>
+          <td role="cell" data-label="Actions" class="rental-actions-cell actions">
+            ${canReturn ? `<button data-action="return" data-id="${safeId}" class="primary">Return</button>` : `<span class="muted">—</span>`}
+            <button data-action="note" data-id="${safeId}" data-note="${safeNote}">Note</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -343,7 +375,7 @@
       });
     } catch (e) {
       if (e.name === "AbortError") return; // expected when typing quickly
-      tbody.innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">${escapeHTML(e.message)}</td></tr>`;
     }
   }
 
@@ -358,7 +390,7 @@
 
     btn.disabled = true;
     try {
-      const r = await fetch("/api/rentals-return", {
+      const r = await StaffSession.fetch("/api/rentals-return", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -370,6 +402,7 @@
       });
 
       const data = await r.json();
+      if (!StaffSession.isReady()) return;
       if (!r.ok) throw new Error(data.error || "Return failed");
 
       setToast(`Return logged for agreement #${agreementId}.`);
@@ -391,20 +424,20 @@
 
     btn.disabled = true;
     try {
-      const r = await fetch("/api/rentals-note", {
+      const r = await StaffSession.fetch("/api/rentals-note", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agreementId, note: result.note })
       });
 
       const data = await r.json();
+      if (!StaffSession.isReady()) return;
       if (!r.ok) throw new Error(data.error || "Save note failed");
 
       const tr = btn.closest("tr");
       const newNote = (data.agreement.note || "").toString();
-      const safeNewNote = newNote.replace(/"/g, "&quot;");
       tr.querySelectorAll('button[data-action="note"]').forEach((b) => {
-        b.setAttribute("data-note", safeNewNote);
+        b.setAttribute("data-note", newNote);
       });
 
       setToast(`Note saved for agreement #${agreementId}.`);
@@ -415,15 +448,28 @@
     }
   }
 
-  function exportCsv() {
-    setToast("");
-    const from = el("exportFrom").value;
-    const to = el("exportTo").value;
-    const qs = new URLSearchParams();
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-    window.location.href = `/api/returns-export?${qs.toString()}`;
+  async function exportCsv() {
+    setToast('');
+    const button=el('exportBtn'); button.disabled=true;
+    try {
+      const qs=new URLSearchParams();
+      if(el('exportFrom').value)qs.set('from',el('exportFrom').value);
+      if(el('exportTo').value)qs.set('to',el('exportTo').value);
+      const response=await StaffSession.fetch(`/api/returns-export?${qs}`);
+      if(!response.ok)throw new Error('Unable to export returns. Check your staff sign-in and try again.');
+      const blob=await response.blob(); if(!StaffSession.isReady())return;
+      const url=URL.createObjectURL(blob), link=document.createElement('a');
+      link.href=url; link.download='rental-returns.csv'; document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch(error){setToast(error.message);} finally{button.disabled=false;}
   }
+  window.addEventListener('staff-session-ended',()=>{
+    if(inFlight)inFlight.abort();
+    el('rows').replaceChildren(); el('count').textContent=''; setToast('Staff sign-in is required.');
+    for(const cleanup of [...dialogCleanups.values()])cleanup(null);
+    el('returnComment').value=''; el('noteText').value='';
+  });
+  window.addEventListener('staff-session-ready',search);
 
   // Automatic search on filter changes
   el("name").addEventListener("input", scheduleSearch);
@@ -436,7 +482,7 @@
     setDefaultDateRange();
     el("statusFilter").value = "OUT";
 
-    el("rows").innerHTML = `<tr><td colspan="6" class="muted">Adjust filters to see rentals.</td></tr>`;
+    el("rows").innerHTML = `<tr><td colspan="7" class="muted">Adjust filters to see rentals.</td></tr>`;
     el("count").textContent = "";
     setToast("");
     search();

@@ -28,9 +28,9 @@
                    class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
 
-          <!-- DOB (required for Smartwaiver autofill; not editable on form) -->
+          <!-- DOB belongs to the adult signer, including on family waivers. -->
           <div>
-            <label class="block text-sm font-medium mb-1">Date of Birth</label>
+            <label class="block text-sm font-medium mb-1">Adult signer’s date of birth</label>
             <div class="grid grid-cols-3 gap-3">
               <div>
                 <label class="sr-only" for="dobMonth">Month</label>
@@ -52,7 +52,7 @@
               </div>
             </div>
             <p class="text-xs text-gray-500 mt-2">
-              Your DOB is required to prefill the intake form and can’t be edited on the next screen.
+              If minors are renting, enter the parent or guardian’s date of birth here. You can review and correct the prefilled details in Smartwaiver before signing.
             </p>
           </div>
 
@@ -82,7 +82,7 @@
         <!-- CONFIRM CARD (shown if Lightspeed match found) -->
         <div id="confirmCard" class="hidden mt-6 border border-gray-200 rounded-2xl p-5">
           <h2 class="text-lg font-semibold">We found your record</h2>
-          <p class="text-sm text-gray-600 mt-1">Please confirm your information.</p>
+          <p class="text-sm text-gray-600 mt-1">Please confirm this is the adult who will sign. Your entered email and date of birth will be used.</p>
           <dl class="mt-4 grid grid-cols-1 gap-3">
             <div>
               <dt class="text-xs text-gray-500">Name</dt>
@@ -115,9 +115,6 @@
     </main>
 
     <script>
-      // === CONFIG ===
-      const WAIVER_ID = "t4wxsazzyeycwg5vgobz9v"; // replace with your Smartwaiver Intake template ID
-
       // === DOM ===
       const form = document.getElementById('startForm');
       const statusEl = document.getElementById('status');
@@ -130,7 +127,10 @@
       const dobDayEl   = document.getElementById('dobDay');
       const dobYearEl  = document.getElementById('dobYear');
 
-      let lastLookup = null; // stores last /api/lookup response
+      let lastLookup = null; // Confirmed details are used only for this form entry.
+      let busy = false;
+      let navigating = false;
+      const continueBtn = document.getElementById('continueBtn');
 
       // === INIT DROPDOWNS ===
       (function initDob() {
@@ -187,111 +187,112 @@
           d.getUTCFullYear() === Number(yyyy) &&
           String(d.getUTCMonth()+1).padStart(2,'0') === mm &&
           String(d.getUTCDate()).padStart(2,'0') === dd;
-        return valid ? `${yyyy}${mm}${dd}` : "";
+        return valid && iso <= new Date().toISOString().slice(0, 10) ? `${yyyy}${mm}${dd}` : "";
       }
 
-      function buildAutofillUrl(d, minorsYes, dobYyyymmdd) {
-        const p = new URLSearchParams();
-
-        // Always include email + DOB (required)
-        if (d.email) p.set('wautofill_email', d.email);
-        if (dobYyyymmdd) p.set('wautofill_dobyyyymmdd', dobYyyymmdd);
-
-        // Tag with Lightspeed ID if present
-        if (d.lightspeed_id) p.set('wautofill_tag', `ls_${d.lightspeed_id}`);
-
-        if (!minorsYes) {
-          // Full autofill path (No minors): include names/phone if we have them from LS
-          if (d.first_name) p.set('wautofill_firstname', d.first_name);
-          if (d.last_name)  p.set('wautofill_lastname',  d.last_name);
-          if (d.mobile)     p.set('wautofill_phone',     d.mobile);
-        }
-        // If minorsYes → only email + tag + DOB
-
-        // put this near the other CONFIG constants at the top of the script:
-	const REDIRECT_URL = `${window.location.origin}/index.html`; // back to the landing page
-
-	// inside buildAutofillUrl(), before constructing the URL:
-	p.set('redirect', REDIRECT_URL);
-
-	// final URL:
-	const url = `https://www.smartwaiver.com/w/${WAIVER_ID}/kiosk/?${p.toString()}`;
-        console.log('INTAKE URL:', url);
-        return url;
+      function setBusy(value) {
+        busy = value;
+        form.querySelectorAll('input, select, button').forEach(el => { el.disabled = value; });
+        btnYes.disabled = value;
+        btnNotMe.disabled = value;
+        continueBtn.textContent = value ? 'Please wait…' : 'Continue';
       }
+      function welcomeDetails() {
+        const email = document.getElementById('email').value.trim();
+        const compact = dobYyyymmddFromSelects();
+        if (!email || !document.getElementById('email').checkValidity()) throw new Error('Please enter a valid email address.');
+        if (!compact) throw new Error('Please select a valid Date of Birth.');
+        const dob = `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
+        const now = new Date();
+        const birthday = new Date(`${dob}T00:00:00Z`);
+        let age = now.getUTCFullYear() - birthday.getUTCFullYear();
+        if (now.getUTCMonth() < birthday.getUTCMonth() || (now.getUTCMonth() === birthday.getUTCMonth() && now.getUTCDate() < birthday.getUTCDate())) age--;
+        if (age < 18) throw new Error('Please enter the adult signer’s date of birth. A parent or guardian must sign for minors.');
+        return { email, dob, minors: isMinorsYes() };
+      }
+      async function startIntake(welcome, record = {}) {
+        setStatus('Preparing your intake. You can review and correct the details before signing…');
+        const res = await fetch('/api/waiver-prefill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stage: 'intake', ...welcome,
+            first_name: record.first_name || '', last_name: record.last_name || '',
+            mobile: record.mobile || '', lightspeed_id: record.lightspeed_id || ''
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.url) throw new Error(data.error || 'Could not prepare your intake. Please try again.');
+        const url = new URL(data.url);
+        if (url.protocol !== 'https:' || !['waiver.smartwaiver.com', 'www.smartwaiver.com'].includes(url.hostname)) throw new Error('Could not verify the waiver link. Please ask a staff member for help.');
+        navigating = true;
+        window.location.assign(url.toString());
+      }
+      // Any correction invalidates the old customer match. Never carry a previous
+      // customer’s identity into a fresh email, DOB, or family selection.
+      form.addEventListener('input', () => {
+        if (busy) return;
+        lastLookup = null;
+        confirmCard.classList.add('hidden');
+        clearStatus();
+      });
+      form.addEventListener('change', () => {
+        if (busy) return;
+        lastLookup = null;
+        confirmCard.classList.add('hidden');
+        clearStatus();
+      });
 
-      // === SUBMIT (email-only lookup + required DOB) ===
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (busy) return;
         clearStatus();
         confirmCard.classList.add('hidden');
-
-        const email = document.getElementById('email').value.trim();
-        const dobYyyymmdd = dobYyyymmddFromSelects();
-
-        if (!email) { setStatus('Please enter your email.'); return; }
-        if (!dobYyyymmdd) { setStatus('Please select a valid Date of Birth.'); return; }
-
+        lastLookup = null;
+        let welcome;
+        try { welcome = welcomeDetails(); } catch (err) { setStatus(err.message); return; }
+        setBusy(true);
         setStatus('Looking up your record…');
-
         try {
-          const res = await fetch('/api/lookup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email }) // server allows email-only
-          });
-
-          const raw = await res.text();
-          console.log('lookup status:', res.status);
-          console.log('lookup body:', raw);
-
-          if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
-
-          const data = JSON.parse(raw);
-          lastLookup = data; // { match_quality, lightspeed_id, first_name, last_name, email, ... }
-
+          let data = {};
+          try {
+            const res = await fetch('/api/lookup', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: welcome.email })
+            });
+            if (res.ok) data = await res.json();
+          } catch { /* A customer lookup outage must not discard welcome details. */ }
           if (data.match_quality === 'exact' || data.match_quality === 'partial') {
-            // Populate confirmation so the customer can verify it’s them
-            document.getElementById('c_name').textContent =
-              `${data.first_name || ''} ${data.last_name || ''}`.trim() || '—';
+            lastLookup = data;
+            document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim() || '—';
             document.getElementById('c_email').textContent = data.email || '—';
             document.getElementById('c_phone').textContent = data.mobile || '—';
-            document.getElementById('c_dob').textContent   = data.date_of_birth || '—';
-
+            document.getElementById('c_dob').textContent = data.date_of_birth || '—';
             confirmCard.classList.remove('hidden');
             clearStatus();
-
-            // On confirm buttons, we will use the KIOSK DOB the guest selected (not LS)
           } else {
-            // No match → go straight to intake with kiosk DOB
-            const url = buildAutofillUrl({ email }, isMinorsYes(), dobYyyymmdd);
-            window.location.href = url;
+            await startIntake(welcome);
           }
         } catch (err) {
-          console.error('lookup error:', err);
-          setStatus('Lookup error. Starting a fresh intake…');
-          const url = buildAutofillUrl({ email }, isMinorsYes(), dobYyyymmdd);
-          window.location.href = url;
-        }
+          setStatus(err.message || 'Could not prepare your intake. Your details are still here; please try again.');
+        } finally { if (!navigating) setBusy(false); }
       });
 
-      // === CONFIRM BUTTONS ===
-      btnYes?.addEventListener('click', () => {
-        if (!lastLookup) return;
-        const dobYyyymmdd = dobYyyymmddFromSelects();
-        if (!dobYyyymmdd) { setStatus('Please select a valid Date of Birth.'); return; }
-        // Use kiosk DOB, LS data for names/phone if minors = No
-        const url = buildAutofillUrl(lastLookup, isMinorsYes(), dobYyyymmdd);
-        window.location.href = url;
+      async function confirmRecord(useRecord) {
+        if (busy || (useRecord && !lastLookup)) return;
+        let welcome;
+        try { welcome = welcomeDetails(); } catch (err) { setStatus(err.message); return; }
+        setBusy(true);
+        try { await startIntake(welcome, useRecord ? lastLookup : {}); }
+        catch (err) { setStatus(err.message || 'Could not prepare your intake. Please try again.'); }
+        finally { if (!navigating) setBusy(false); }
+      }
+      window.addEventListener('pageshow', () => {
+        navigating = false;
+        setBusy(false);
       });
-
-      btnNotMe?.addEventListener('click', () => {
-        const email = document.getElementById('email').value.trim();
-        const dobYyyymmdd = dobYyyymmddFromSelects();
-        if (!dobYyyymmdd) { setStatus('Please select a valid Date of Birth.'); return; }
-        const url = buildAutofillUrl({ email }, isMinorsYes(), dobYyyymmdd);
-        window.location.href = url;
-      });
+      btnYes.addEventListener('click', () => confirmRecord(true));
+      btnNotMe.addEventListener('click', () => confirmRecord(false));
     </script>
   </body>
 </html>

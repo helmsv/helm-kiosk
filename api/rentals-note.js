@@ -1,3 +1,4 @@
+const { requireStaff } = require('../lib/staff-auth');
 // api/rentals-note.js
 const { getPool } = require("./_db");
 const { ensureSchema } = require("./_ensureSchema");
@@ -16,6 +17,9 @@ async function readJson(req) {
 }
 
 module.exports = async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { await requireStaff(req); } catch (error) { return res.status(error.status || 503).json({ error:error.message }); }
+
   try {
     await ensureSchema();
 

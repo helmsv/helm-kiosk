@@ -1,3 +1,4 @@
+const { requireStaff } = require('../lib/staff-auth');
 // Next.js API route: /api/liability-latest
 // Returns the most-recent signed liability for a given email.
 // Always 200 so front-end fetchJSONOrThrow() doesn’t throw.
@@ -13,7 +14,10 @@ async function swGet(path, apiKey) {
   try { return await r.json(); } catch { return {}; }
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { await requireStaff(req); } catch (error) { return res.status(error.status || 503).json({ error:error.message }); }
+
   const apiKey = process.env.SW_API_KEY || "";
   const email = (req.query.email || "").toString().trim();
   const templateId =

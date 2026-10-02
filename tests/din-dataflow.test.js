@@ -38,3 +38,14 @@ test('dialog no longer defaults missing skier type, prior BSL, or stale async se
   assert.match(html,/if \(requestId !== dinRequestId\) return/);
   assert.match(html,/dinClose\.addEventListener\("click", \(\)=>\{ dinRequestId\+\+/);
 });
+
+test('skier dropdown order is placeholder, I, II, III',()=>{
+  const options=html.match(/<select id="inp_type"[\s\S]*?<\/select>/)[0];
+  assert.deepEqual([...options.matchAll(/<option value="([^"]*)"[^>]*>([^<]+)<\/option>/g)].map(m=>[m[1],m[2]]),[['','Select skier type'],['I','Type I'],['II','Type II'],['III','Type III']]);
+});
+test('check-one intake selection reaches the calculator preselection without a fallback',()=>{
+  const data=normalizeIntake({waiverId:'synthetic_choice',email:'example@example.invalid',participants:[{dob:'1990-01-01',customParticipantFields:{a:{displayText:'Skier Type: (Check One)',value:['II']}}}]},new Date('2026-10-02T00:00:00Z'));
+  const participant=RentalData.pickParticipant(data,0,'synthetic_choice');
+  assert.equal(participant.skier_type,'II');
+  assert.match(html,/inpType\(\)\.value = current\.skier_type \|\| ""/);
+});

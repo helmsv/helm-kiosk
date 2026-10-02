@@ -27,5 +27,24 @@
     if (bsl == null || !Number.isInteger(bsl) || bsl < 200 || bsl > 420) missing.push('measured boot sole length (200–420 mm)');
     return missing;
   }
-  return { finiteNumber, pickParticipant, missingDinInputs };
+  function sourceTag(waiverId, participantIndex) {
+    const tag = `intake_${waiverId}_${participantIndex}`;
+    if (typeof waiverId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(waiverId) || !Number.isInteger(participantIndex) || participantIndex < 0 || tag.length > 64) throw new Error('Invalid source intake selection.');
+    return tag;
+  }
+  const normalized = value => String(value || '').normalize('NFC').trim().toLowerCase();
+  function pendingRows(intakes, liabilities, allowLegacy = false) {
+    const samePerson = (row, waiver) => Boolean(normalized(row.first_name) && normalized(row.last_name)) && normalized(row.first_name) === normalized(waiver.firstName) && normalized(row.last_name) === normalized(waiver.lastName);
+    const timely = (row, waiver) => Number.isFinite(Date.parse(row.signed_on)) && Number.isFinite(Date.parse(waiver.createdOn)) && Date.parse(waiver.createdOn) >= Date.parse(row.signed_on);
+    const legacy = (row, waiver) => samePerson(row, waiver) && timely(row, waiver) && ((normalized(row.email) && normalized(row.email) === normalized(waiver.email)) || (row.lightspeed_id && waiver.autoTag === `ls_${row.lightspeed_id}`));
+    return intakes.filter(row => {
+      let tag; try { tag = sourceTag(row.waiver_id, row.participant_index); } catch { return true; }
+      if (liabilities.some(waiver => (waiver.autoTag === tag || waiver.externalId === tag) && timely(row, waiver))) return false;
+      if (!allowLegacy) return true;
+      const matches = liabilities.filter(waiver => legacy(row, waiver));
+      if (matches.length !== 1) return true;
+      return intakes.filter(candidate => legacy(candidate, matches[0])).length !== 1;
+    });
+  }
+  return { finiteNumber, pickParticipant, missingDinInputs, sourceTag, pendingRows };
 });

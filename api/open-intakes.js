@@ -1,121 +1,63 @@
-// api/open-intakes.js
-const SW_BASE = (process.env.SW_BASE_URL || 'https://api.smartwaiver.com').replace(/\/+$/, '');
-const API_BASE = `${SW_BASE}/v4`;
+// Private participant-row view. Never issue a Smartwaiver read before staff auth.
+const { createHash } = require('node:crypto');
+const { apiBase, apiKey, request } = require('../lib/smartwaiver');
+const { createPendingIntakeReader } = require('../lib/pending-intake-reader');
+let reader, readerIdentity;
 
-/** Clean up keys pasted with extra quotes or odd characters */
-function cleanKey(v) {
-  if (!v) return '';
-  let t = String(v).trim();
-  const m = t.match(/^"(.*)"$/);
-  if (m) t = m[1];
-  return t.replace(/[^\x20-\x7E]+/g, '');
+function invalidRange() { return Object.assign(new Error('Invalid intake date range or page.'), { status: 400 }); }
+function dateOnly(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value); }
+function startOfDay(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw invalidRange();
+  return date;
 }
-
-/** Smartwaiver GET with v4 + dual header fallback (sw-api-key / x-api-key) */
-async function swGet(path, key) {
-  const url = `${API_BASE}${path}`;
-  const baseHeaders = { Accept: 'application/json' };
-
-  let r = await fetch(url, { headers: { ...baseHeaders, 'sw-api-key': key }, cache: 'no-store' });
-  if (r.status === 401) {
-    r = await fetch(url, { headers: { ...baseHeaders, 'x-api-key': key }, cache: 'no-store' });
+function range(query) {
+  let { from, to, page = '0' } = query || {};
+  if (typeof page !== 'string' || !/^\d{1,5}$/.test(page) || Number(page) > 10000) throw invalidRange();
+  if (!from && !to) from = to = new Date().toISOString().slice(0, 10);
+  let fromDts = from, toDts = to;
+  if (dateOnly(from) && dateOnly(to)) {
+    fromDts = startOfDay(from).toISOString();
+    const end = startOfDay(to); end.setUTCDate(end.getUTCDate() + 1); toDts = end.toISOString();
   }
-  if (!r.ok) {
-    const text = await r.text().catch(() => '');
-    throw new Error(`${path} ${r.status} ${text.slice(0, 500)}`);
+  return { fromDts, toDts, page: Number(page) };
+}
+function privateReader() {
+  // Account/key rotation must not reuse another account's in-memory rows.
+  const identity = createHash('sha256').update(JSON.stringify([apiBase(), apiKey()])).digest('hex');
+  if (!reader || readerIdentity !== identity) {
+    readerIdentity = identity;
+    reader = createPendingIntakeReader({ request });
   }
-  return r.json();
+  return reader;
 }
-
-/** Convert Smartwaiver "YYYY-MM-DD HH:mm:ss" to ISO UTC for consistent sorting */
-function normalizeSwDateToISO(s) {
-  if (!s) return '';
-  // Matches "2025-10-18 15:11:00"
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
-    return s.replace(' ', 'T') + 'Z'; // treat as UTC
-  }
-  // Otherwise let Date try; if valid, toISOString
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.toISOString();
-  return s; // fallback as-is
-}
-
-/** Map a waiver list item to the row shape used by tech.html */
-function mapWaiverToRow(w) {
-  return {
-    waiver_id: w.waiverId || w.id || '',
-    signed_on: normalizeSwDateToISO(w.createdOn || w.created || ''),
-    intake_pdf_url: w.pdf || '',
-    lightspeed_id: (w.autoTag || '').startsWith('ls_') ? (w.autoTag || '').slice(3) : '',
-    email: w.email || '',
-    first_name: w.firstName || '',
-    last_name: w.lastName || '',
-    participant_index: 0,
-    age: null,
-    weight_lb: null,
-    height_in: null,
-    skier_type: ''
-  };
-}
-
-/** Date-range helpers: treat `to` as exclusive start-of-next-local-day */
-function isDateOnly(s){ return /^\d{4}-\d{2}-\d{2}$/.test(s || ""); }
-function startOfLocalDayISO(dStr){
-  const d = new Date(dStr);
-  d.setHours(0,0,0,0);
-  return d.toISOString(); // UTC ISO
-}
-function nextLocalDayISO(dStr){
-  const d = new Date(dStr);
-  d.setHours(0,0,0,0);
-  d.setDate(d.getDate()+1);
-  return d.toISOString(); // UTC ISO
-}
-function normalizeRange({ from, to }) {
-  // If both are plain dates (YYYY-MM-DD), make [from, toNextDay) in local time.
-  if (isDateOnly(from) && isDateOnly(to)) {
-    return { fromDts: startOfLocalDayISO(from), toDts: nextLocalDayISO(to) };
-  }
-  // If one/both missing, default to "today" local [start, nextDayStart)
-  if (!from && !to) {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth()+1).padStart(2,'0');
-    const dd = String(today.getDate()).padStart(2,'0');
-    const d = `${yyyy}-${mm}-${dd}`;
-    return { fromDts: startOfLocalDayISO(d), toDts: nextLocalDayISO(d) };
-  }
-  // If provided as full ISO timestamps, pass through as-is
-  return { fromDts: from, toDts: to };
-}
-
-export default async function handler(req, res) {
+const messages = {
+  400: 'Invalid intake date range or page.',
+  401: 'Staff sign-in is required.',
+  403: 'Staff access is required.',
+  404: 'The requested intake was not found.',
+  429: 'Smartwaiver is busy. Please wait before trying again.',
+  502: 'Unable to load intake rows. Please try again.',
+  503: 'Staff access or intake data is not configured.',
+};
+module.exports = async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store');
   try {
-    res.setHeader('Cache-Control', 'no-store');
-
-    const key = cleanKey(process.env.SW_API_KEY);
-    const intakeId = process.env.INTAKE_WAIVER_ID;
-    if (!key || !intakeId) {
-      return res.status(200).json({ rows: [], error: 'Missing Smartwaiver env (SW_API_KEY / INTAKE_WAIVER_ID)' });
+    // Lazy import also fails closed if the auth integration is absent/unavailable.
+    const { requireStaff } = require('../lib/staff-auth');
+    await requireStaff(req);
+    if (req.method && req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      return res.status(405).json({ rows: [], error: 'Method not allowed.' });
     }
-
-    const { from, to } = req.query || {};
-    const { fromDts, toDts } = normalizeRange({ from, to });
-
-    const qs = new URLSearchParams({
-      templateId: intakeId,
-      verified: 'true',
-      limit: '300' // Smartwaiver max
-    });
-    if (fromDts) qs.set('fromDts', fromDts);
-    if (toDts)   qs.set('toDts', toDts);
-
-    const payload = await swGet(`/waivers?${qs.toString()}`, key);
-    const waivers = Array.isArray(payload?.waivers) ? payload.waivers : [];
-    const rows = waivers.map(mapWaiverToRow);
-
-    res.status(200).json({ rows, count: rows.length, from: fromDts, to: toDts });
-  } catch (e) {
-    res.status(200).json({ rows: [], error: String(e) });
+    const templateId = process.env.INTAKE_WAIVER_ID || process.env.INTAKE_TEMPLATE_ID;
+    if (!apiKey() || !templateId) return res.status(503).json({ rows: [], error: messages[503] });
+    const result = await privateReader().read({ ...range(req.query), templateId });
+    return res.status(200).json(result);
+  } catch (cause) {
+    const status = Object.hasOwn(messages, cause?.status) ? Number(cause.status) : 502;
+    const retry = status === 429 && Number.isFinite(Number(cause?.retryAfterSeconds)) ? Math.max(1, Math.ceil(Number(cause.retryAfterSeconds))) : status === 429 ? 60 : 0;
+    if (retry) res.setHeader('Retry-After', String(retry));
+    return res.status(status).json({ rows: [], error: messages[status], ...(retry ? { retry_after_seconds: retry } : {}) });
   }
-}
+};

@@ -1,3 +1,4 @@
+const { requireStaff } = require('../lib/staff-auth');
 // api/open-liabilities.js
 const SW_BASE = (process.env.SW_BASE_URL || 'https://api.smartwaiver.com').replace(/\/+$/, '');
 const API_BASE = `${SW_BASE}/v4`;
@@ -66,7 +67,10 @@ function normalizeRange({ from, to }) {
   return { fromDts: from, toDts: to };
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { await requireStaff(req); } catch (error) { return res.status(error.status || 503).json({ error:error.message }); }
+
   try {
     res.setHeader('Cache-Control', 'no-store');
 

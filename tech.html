@@ -20,17 +20,18 @@
     .pill { @apply inline-flex items-center justify-center rounded-lg border border-gray-300 px-2 py-0.5 text-xs bg-white; }
     .tiny { @apply text-[11px] text-gray-500; }
   </style>
+  <link rel="stylesheet" href="/rental-mobile.css">
 </head>
-<body class="min-h-screen bg-gray-50 text-gray-900">
+<body class="rental-page rental-tech min-h-screen bg-gray-50 text-gray-900">
   <main class="mx-auto max-w-7xl p-6 pt-10">
     <div class="bg-white shadow-xl rounded-2xl p-6">
-      <div class="flex items-center justify-between mb-3">
+      <div class="rental-page-header flex items-center justify-between mb-3">
         <h1 class="text-2xl font-bold">Customers Needing Liability (Open)</h1>
-        <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2">
-            <label class="text-xs text-gray-600">From</label>
+        <div class="rental-toolbar flex items-center gap-3">
+          <div class="rental-date-range flex items-center gap-2">
+            <label for="fromDate" class="text-xs text-gray-600">From</label>
             <input id="fromDate" type="date" class="input !py-1 !px-2 w-[150px]"/>
-            <label class="text-xs text-gray-600">To</label>
+            <label for="toDate" class="text-xs text-gray-600">To</label>
             <input id="toDate" type="date" class="input !py-1 !px-2 w-[150px]"/>
             <button id="applyRange" class="btn-outline">Apply</button>
           </div>
@@ -44,9 +45,9 @@
         One row per <strong>participant</strong> (adult or minor) from an Intake that has no matching Liability yet.
       </p>
 
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead>
+      <div class="rental-table-wrap overflow-x-auto">
+        <table class="rental-table min-w-full text-sm" role="table" aria-label="Customers needing liability">
+          <thead role="rowgroup">
             <tr class="text-left text-gray-600 border-b">
               <th class="py-2 pr-4">Signed</th>
               <th class="py-2 pr-4">Participant</th>
@@ -60,10 +61,21 @@
               <th class="py-2 pr-4">Actions</th>
             </tr>
           </thead>
-          <tbody id="tbody"></tbody>
+          <tbody id="tbody" role="rowgroup"></tbody>
         </table>
       </div>
 
+      <div class="rental-row-actions" style="margin-top:12px">
+        <button id="previousPage" type="button" class="btn-outline" disabled>Previous page</button>
+        <button id="nextPage" type="button" class="btn-outline" disabled>Next page</button>
+        <span id="intakeLoadStatus" role="status" class="tiny"></span>
+      </div>
+      <details style="margin-top:12px;font-size:12px"><summary>Waiver setup checks</summary>
+        <p>Staff-only setup check. The test preview uses fictional adult data and must not be signed.</p>
+        <button id="checkWaiverFields" type="button" class="btn-outline">Check template fields</button>
+        <button id="testWaiverPreview" type="button" class="btn-outline">Open unsigned test preview</button>
+        <pre id="waiverSetupResult" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+      </details>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
       <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v9</div>
     </div>
@@ -73,8 +85,8 @@
 
   <!-- DIN modal -->
   <div id="dinModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
-    <div class="bg-white rounded-2xl shadow-2xl p-6 w-[920px] max-w-[95vw]">
-      <div class="flex items-start justify-between mb-3">
+    <div class="rental-din-panel bg-white rounded-2xl shadow-2xl p-6 w-[920px] max-w-[95vw]">
+      <div class="rental-dialog-header flex items-start justify-between mb-3">
         <h3 class="text-lg font-semibold">DIN Calculator (pre-Liability)</h3>
         <button id="dinClose" class="btn-outline">Close</button>
       </div>
@@ -98,7 +110,7 @@
         <div class="border rounded-2xl p-4 bg-gray-50">
           <h4 class="font-semibold mb-2">Tech Inputs</h4>
 
-          <div class="grid grid-cols-2 gap-3">
+          <div class="rental-tech-inputs grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-gray-700 mb-1">Boot Sole Length (mm)</label>
               <input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 315">
@@ -107,8 +119,8 @@
             <div>
               <label class="block text-xs text-gray-700 mb-1">Skier Type</label>
               <select id="inp_type" class="select">
-                <option value="I">Type I</option>
                 <option value="" selected>Select skier type</option>
+                <option value="I">Type I</option>
                 <option value="II">Type II</option>
                 <option value="III">Type III</option>
               </select>
@@ -139,7 +151,7 @@
             </div>
             <div class="mt-1 text-xs text-gray-600" id="out_summary"></div>
 
-            <div class="mt-4 grid grid-cols-2 gap-3">
+            <div class="rental-bindings mt-4 grid grid-cols-2 gap-3">
               <div class="border rounded-lg p-3 bg-gray-50">
                 <div class="text-sm font-semibold mb-2">Left Binding</div>
                 <div class="flex items-center justify-between mb-2">
@@ -165,7 +177,12 @@
             </div>
           </div>
 
-          <div class="mt-4 flex items-center gap-3">
+          <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px;font-size:13px">
+            <input id="reviewTechnician" type="checkbox" style="width:auto;min-height:0;margin-top:3px">
+            <span>I reviewed this participant, the measured boot sole length, skier code and calculated DIN against current shop procedures.</span>
+          </label>
+          <p class="tiny">The reviewed code, DIN and boot sole length will be copied. Enter the final indicator settings separately on the final waiver.</p>
+          <div class="rental-dialog-actions mt-4 flex items-center gap-3">
             <button id="btnCopy" class="btn-outline">Copy All <span class="kbd">⌘C</span></button>
             <button id="btnOpenLiab" class="btn">Open Liability</button>
           </div>
@@ -177,9 +194,10 @@
   </div>
 
   <script src="/rental-data.js"></script>
-  <script>
+  <script src="/staff-session.js"></script>
+<script>
     let LIABILITY_WAIVER_ID = "";
-    const REFRESH_MS = 3000;
+    const REFRESH_MS = 15000;
     const tb = document.getElementById("tbody");
     const sseEl = document.getElementById("sseStatus");
     const fromDateEl = document.getElementById('fromDate');
@@ -255,7 +273,7 @@
     const hiddenSet = new Set();
     async function fetchHiddenKeys(){
       try{
-        const r = await fetch('/api/hidden', { headers: { 'Cache-Control':'no-cache' }});
+        const r = await StaffSession.fetch('/api/hidden', { headers: { 'Cache-Control':'no-cache' }});
         const data = await r.json();
         hiddenSet.clear();
         (data?.keys || []).forEach(k => hiddenSet.add(String(k)));
@@ -266,7 +284,7 @@
       if (hide) hiddenSet.add(key); else hiddenSet.delete(key);
       renderTable();
       async function tryRoute(url){
-        const r = await fetch(url, {
+        const r = await StaffSession.fetch(url, {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
           body: JSON.stringify({ key, hide, value: hide ? '1':'0' })
@@ -299,13 +317,15 @@
 
     // helper: fetch JSON w/ clear errors
     async function fetchJSONOrThrow(url) {
-      const r = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
+      const r = await StaffSession.fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
       const text = await r.text();
       let json; try { json = JSON.parse(text); } catch {}
-      if (!r.ok) throw new Error(`HTTP ${r.status} ${text.slice(0,200)}`);
+      if (!r.ok) { const error=new Error(json?.error || `Request failed (${r.status}).`); error.retryAfterSeconds=Number(json?.retry_after_seconds || r.headers.get('Retry-After')) || 0; throw error; }
       if (json && json.error) throw new Error(json.error);
       return json ?? {};
     }
+
+    function escapeHTML(value){ return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
 
     // -----------------------
     // Render
@@ -323,6 +343,7 @@
         const hidden = hiddenSet.has(key);
 
         tr.className = "border-b";
+        tr.setAttribute("role", "row");
         if (hidden && showHidden) tr.classList.add("opacity-50");
 
         // Use server proxy for PDF (no 404 public page issues)
@@ -331,41 +352,41 @@
         const hiddenPill = hidden && showHidden ? `<span class="pill">Hidden</span>` : "";
 
         tr.innerHTML = `
-          <td class="py-2 pr-4 whitespace-nowrap">${fmtTime(r.signed_on)}</td>
-          <td class="py-2 pr-4">${r.first_name || "—"} ${r.last_name || ""} ${hiddenPill}</td>
-          <td class="py-2 pr-4">${r.email || "—"}</td>
-          <td class="py-2 pr-4">${r.age ?? "—"}</td>
-          <td class="py-2 pr-4">${r.weight_lb ?? "—"}</td>
-          <td class="py-2 pr-4">${toCm(r.height_in) || "—"}</td>
-          <td class="py-2 pr-4">${displaySkier(r.skier_type)}</td>
-          <td class="py-2 pr-4">${r.lightspeed_id || "—"}</td>
-          <td class="py-2 pr-4">${pdfCell}</td>
-          <td class="py-2 pr-4">
-            <div class="flex items-center gap-2">
+          <td role="cell" data-label="Signed" class="py-2 pr-4 whitespace-nowrap"><span>${escapeHTML(fmtTime(r.signed_on))}</span></td>
+          <td role="cell" data-label="Participant" class="py-2 pr-4"><span>${escapeHTML(r.first_name || "—")} ${escapeHTML(r.last_name || "")} ${hiddenPill}</span></td>
+          <td role="cell" data-label="Email" class="py-2 pr-4"><span>${escapeHTML(r.email || "—")}</span></td>
+          <td role="cell" data-label="Age" class="py-2 pr-4"><span>${escapeHTML(r.age ?? "—")}</span></td>
+          <td role="cell" data-label="Wt (lb)" class="py-2 pr-4"><span>${escapeHTML(r.weight_lb ?? "—")}</span></td>
+          <td role="cell" data-label="Ht (cm)" class="py-2 pr-4"><span>${escapeHTML(toCm(r.height_in) || "—")}</span></td>
+          <td role="cell" data-label="Skier Type" class="py-2 pr-4"><span>${escapeHTML(displaySkier(r.skier_type))}</span></td>
+          <td role="cell" data-label="LS ID" class="py-2 pr-4"><span>${escapeHTML(r.lightspeed_id || "—")}</span></td>
+          <td role="cell" data-label="Intake PDF" class="py-2 pr-4"><span>${pdfCell}</span></td>
+          <td role="cell" data-label="Actions" class="rental-actions-cell py-2 pr-4">
+            <div class="rental-row-actions flex items-center gap-2">
               <button
                 class="btn-outline"
                 data-action="din"
-                data-email="${r.email || ''}"
-                data-lsid="${r.lightspeed_id || ''}"
-                data-first="${r.first_name || ''}"
-                data-last="${r.last_name || ''}"
-                data-intake="${r.waiver_id || ''}"
-                data-pindex="${r.participant_index != null ? r.participant_index : 0}"
+                data-email="${escapeHTML(r.email || '')}"
+                data-lsid="${escapeHTML(r.lightspeed_id || '')}"
+                data-first="${escapeHTML(r.first_name || '')}"
+                data-last="${escapeHTML(r.last_name || '')}"
+                data-intake="${escapeHTML(r.waiver_id || '')}"
+                data-pindex="${escapeHTML(r.participant_index != null ? r.participant_index : 0)}"
               >Compute DIN</button>
               <button
                 class="btn"
                 data-action="liab"
-                data-intake="${r.waiver_id || ''}"
-                data-pindex="${r.participant_index ?? 0}"
-                data-email="${r.email || ''}"
-                data-lsid="${r.lightspeed_id || ''}"
-                data-first="${r.first_name || ''}"
-                data-last="${r.last_name || ''}"
+                data-intake="${escapeHTML(r.waiver_id || '')}"
+                data-pindex="${escapeHTML(r.participant_index ?? 0)}"
+                data-email="${escapeHTML(r.email || '')}"
+                data-lsid="${escapeHTML(r.lightspeed_id || '')}"
+                data-first="${escapeHTML(r.first_name || '')}"
+                data-last="${escapeHTML(r.last_name || '')}"
               >Open Liability</button>
               <button
                 class="${hidden ? 'btn-outline' : 'btn-danger'}"
                 data-action="toggle-hide"
-                data-key="${key}"
+                data-key="${escapeHTML(key)}"
               >${hidden ? 'Unhide' : 'Hide'}</button>
             </div>
           </td>
@@ -383,8 +404,7 @@
             const pindex   = parseInt(btn.getAttribute("data-pindex") || "0", 10);
 
             if (action === "liab") {
-              const url = buildLiabilityUrl({ email, lightspeed_id: lsid, first_name: first, last_name: last });
-              window.open(url, "_blank", "noopener");
+              await openLiabilityDraft({ waiverId, participantIndex:pindex }, btn);
               return;
             }
 
@@ -450,13 +470,18 @@
     // -----------------------
     // Data fetch helpers
     // -----------------------
-    async function fetchIntakes(fromVal, toVal){
-      const q = new URLSearchParams({ from: fromVal, to: toVal });
-      const data = await fetchJSONOrThrow(`/api/open-intakes?${q.toString()}`);
-      return Array.isArray(data?.rows) ? data.rows : [];
+    function selectedRange(){
+      const from = new Date(`${fromDateEl.value}T00:00:00`);
+      const to = new Date(`${toDateEl.value}T00:00:00`); to.setDate(to.getDate() + 1);
+      if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to <= from) throw new Error('Choose a valid date range.');
+      return { from:from.toISOString(), to:to.toISOString() };
     }
-    async function fetchLiabilities(fromVal, toVal){
-      const q = new URLSearchParams({ from: fromVal, to: toVal });
+    async function fetchIntakes(){
+      const q = new URLSearchParams({ ...selectedRange(), page:String(intakePage) });
+      return await fetchJSONOrThrow(`/api/open-intakes?${q.toString()}`);
+    }
+    async function fetchLiabilities(){
+      const q = new URLSearchParams(selectedRange());
       const data = await fetchJSONOrThrow(`/api/open-liabilities?${q.toString()}`);
       return Array.isArray(data?.rows) ? data.rows : [];
     }
@@ -465,17 +490,32 @@
     }
     async function fetchLatestLiability({ tag, email }){
       const q=new URLSearchParams(); if(tag) q.set("tag",tag); if(email) q.set("email",email);
-      const r=await fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
+      const r=await StaffSession.fetch(`/api/liability-latest?${q.toString()}`, { headers: { 'Cache-Control':'no-cache' }});
       if(!r.ok) return {};
       return await r.json();
     }
-    function buildLiabilityUrl({ email, lightspeed_id, first_name, last_name }){
-      const p=new URLSearchParams();
-      if(email) p.set("wautofill_email",email);
-      if(lightspeed_id) p.set("wautofill_tag",`ls_${lightspeed_id}`);
-      if(first_name) p.set("wautofill_firstname",first_name);
-      if(last_name)  p.set("wautofill_lastname",last_name);
-      return `https://www.smartwaiver.com/w/${LIABILITY_WAIVER_ID}/kiosk/?${p.toString()}`;
+    const openingDrafts=new Set();
+    async function openLiabilityDraft(selection, button, technicianReview){
+      const key=rowKey(selection.waiverId,selection.participantIndex);
+      if(!selection.waiverId||openingDrafts.has(key))return;
+      const tab=window.open('about:blank','_blank');
+      if(!tab){showToast('Allow popups to open the final waiver.');return;}
+      tab.opener=null; tab.document.title='Preparing final waiver';
+      tab.document.body.textContent='Preparing editable details. Review and correct every field before signing.';
+      openingDrafts.add(key); if(button)button.disabled=true;
+      try{
+        const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'liability',...selection,...(technicianReview?{technicianReview}:{})})});
+        const data=await response.json();
+        if(!response.ok||!data.url)throw new Error(data.error||'Could not prepare the final waiver.');
+        if(!StaffSession.isReady())throw new Error('Your staff session ended. Reopen the final waiver after signing in.');
+        const url=new URL(data.url);
+        if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected waiver destination.');
+        if(Array.isArray(data.skippedFields)&&data.skippedFields.length)showToast('Some optional answers were not copied. Review and complete the final waiver.');
+        if(!tab.closed)tab.location.replace(url.toString());
+      }catch(error){
+        if(!tab.closed)tab.document.body.textContent=error.message||'Unable to prepare the waiver. Return to Rentals and try again.';
+        showToast(error.message||'Unable to prepare the waiver.');
+      }finally{openingDrafts.delete(key);if(button)button.disabled=false;}
     }
 
     // ----- participant extraction helpers for DIN -----
@@ -497,65 +537,60 @@
     // -----------------------
     // Reconciliation & filtering
     // -----------------------
-    function normalize(s){ return (s||'').toString().trim().toLowerCase(); }
-    function makeLiabilityIndex(liabs){
-      const byTag = new Set();
-      const byEmail = new Set();
-      const byName = new Set();
-      for (const w of liabs){
-        const tag = (w.autoTag||'').toString();
-        if (tag.startsWith('ls_')) byTag.add(tag.slice(3));
-        const em = normalize(w.email);
-        if (em) byEmail.add(em);
-        const nk = `${normalize(w.firstName)}_${normalize(w.lastName)}`.trim();
-        if (nk !== '_') byName.add(nk);
-      }
-      return { byTag, byEmail, byName };
-    }
-    function applyReconciliation(intakeRows, liabIdx){
-      const out = [];
-      for (const r of intakeRows){
-        if (!inLocalDayRange(r.signed_on)) continue;
-        const tagHit = r.lightspeed_id && liabIdx.byTag.has(String(r.lightspeed_id));
-        const emailHit = r.email && liabIdx.byEmail.has(normalize(r.email));
-        const nameHit = liabIdx.byName.has(`${normalize(r.first_name)}_${normalize(r.last_name)}`);
-        if (tagHit || emailHit || nameHit) continue;
-        out.push(r);
-      }
-      return out;
+    function applyReconciliation(intakeRows, liabilities, complete){
+      return RentalData.pendingRows(intakeRows.filter(row => inLocalDayRange(row.signed_on)), liabilities, complete);
     }
 
     // -----------------------
     // Poll
     // -----------------------
+    let intakePage=0, pageHasMore=false, nextRefreshAt=0, refreshGeneration=0, refreshing=false, refreshQueued=false;
     async function refreshPoll(){
+      if (Date.now() < nextRefreshAt) return;
+      if (refreshing) { refreshQueued=true; return; }
+      refreshing=true; const generation=refreshGeneration;
       try{
+        await StaffSession.ready();
         await fetchHiddenKeys();
-        const fromKey = (fromDateEl.value || '').slice(0,10);
-        const toKey   = (toDateEl.value   || '').slice(0,10);
-        let intakes = [], liabs = [];
-        let intErr = null, liabErr = null;
-        await Promise.all([
-          (async ()=>{ try{ intakes = await fetchIntakes(fromKey, toKey); } catch(e){ intErr = e; } })(),
-          (async ()=>{ try{ liabs   = await fetchLiabilities(fromKey, toKey); } catch(e){ liabErr = e; } })()
-        ]);
-        if (intErr && liabErr) throw new Error(`open-intakes: ${intErr.message || intErr} | open-liabilities: ${liabErr.message || liabErr}`);
-        const liabIdx = makeLiabilityIndex(liabs);
+        const [intakeResult, liabilityResult] = await Promise.allSettled([fetchIntakes(), fetchLiabilities()]);
+        if (generation !== refreshGeneration) return;
+        if (intakeResult.status !== 'fulfilled') throw intakeResult.reason;
+        const envelope=intakeResult.value;
+        const liabs=liabilityResult.status === 'fulfilled' ? liabilityResult.value : [];
         store.clear();
-        for (const row of applyReconciliation(intakes, liabIdx)){ upsertRow(row); }
+        for (const row of applyReconciliation(Array.isArray(envelope.rows) ? envelope.rows : [], liabs, !envelope.partial)) upsertRow(row);
+        pageHasMore=envelope.pagination?.has_more === true;
+        document.getElementById('previousPage').disabled=intakePage === 0;
+        document.getElementById('nextPage').disabled=!pageHasMore;
+        const pending=Number(envelope.pending_waivers)||0, failed=Number(envelope.failed_waivers)||0;
+        const parts=[`Page ${intakePage+1}`];
+        if (pending) parts.push(`${pending} intake${pending===1?'':'s'} still loading`);
+        if (failed) parts.push(`${failed} intake${failed===1?'':'s'} could not load; retrying`);
+        if (envelope.rejected_waivers) parts.push('Some records could not be verified');
+        if (pageHasMore) parts.push('More intakes on the next page');
+        if (liabilityResult.status !== 'fulfilled') parts.push('Liability matching unavailable; all loaded intakes retained');
+        if (!envelope.partial && !store.size) parts.push('No pending participants in this range');
+        document.getElementById('intakeLoadStatus').textContent=parts.join(' · ');
+        nextRefreshAt=Date.now()+Math.max(0,Number(envelope.retry_after_seconds)||0)*1000;
         renderTable();
-        const parts = [];
-        if (intErr) parts.push(`intakes error: ${intErr.message || intErr}`);
-        if (liabErr) parts.push(`liabilities error: ${liabErr.message || liabErr}`);
-        if (parts.length) showToast(parts.join(' • '));
-      }catch(e){
-        console.error(e);
-        showToast(`Refresh failed: ${e.message || e}`);
+      }catch(error){
+        if (generation !== refreshGeneration) return;
+        if (error.retryAfterSeconds) nextRefreshAt=Date.now()+error.retryAfterSeconds*1000;
+        document.getElementById('intakeLoadStatus').textContent=error.message || 'Unable to load intakes.';
+      }finally{
+        refreshing=false;
+        if (refreshQueued) { refreshQueued=false; setTimeout(refreshPoll,0); }
       }
     }
-
-    document.getElementById("refreshBtn").addEventListener("click", refreshPoll);
-    document.getElementById("applyRange").addEventListener("click", refreshPoll);
+    function reloadRange(page=0){
+      intakePage=page; refreshGeneration++; store.clear(); renderTable();
+      document.getElementById('intakeLoadStatus').textContent='Loading participant details…';
+      refreshPoll();
+    }
+    document.getElementById('previousPage').addEventListener('click',()=>reloadRange(Math.max(0,intakePage-1)));
+    document.getElementById('nextPage').addEventListener('click',()=>{if(pageHasMore)reloadRange(intakePage+1);});
+    document.getElementById('refreshBtn').addEventListener('click',refreshPoll);
+    document.getElementById('applyRange').addEventListener('click',()=>reloadRange(0));
     toggleHiddenBtn.addEventListener("click", () => {
       showHidden = !showHidden;
       reflectHiddenToggle();
@@ -576,52 +611,8 @@
         let v = 0; try { const obj = JSON.parse(e.data); v = Number(obj.version) || 0; } catch { v = parseInt((e.data||'0'),10)||0; }
         if (v > lastVersion) { lastVersion = v; setSSE(`tick v${v}`); scheduleTickRefresh(); }
       });
-      es.addEventListener('intake', (e) => {
-        setSSE('intake');
-        try {
-          const payload = JSON.parse(e.data);
-          const body = payload?.data || {};
-          const waiver_id = body.waiver_id;
-          const signed_on = body.signed_on;
-          const email = body.email || '';
-          const lightspeed_id = body.lightspeed_id || '';
-          const intake_pdf_url = body.intake_pdf_url || '';
-          const participants = Array.isArray(body.participants) ? body.participants : [];
-          if (!inLocalDayRange(signed_on)) return;
-          for (const p of participants) {
-            const row = {
-              waiver_id, signed_on, intake_pdf_url, lightspeed_id,
-              email: p.email || email,
-              first_name: p.first_name || '',
-              last_name:  p.last_name || '',
-              age: finNum(p.age),
-              weight_lb: finNum(p.weight_lb),
-              height_in: finNum(p.height_in),
-              skier_type: normalizeSkierType(p.skier_type || ''),
-              participant_index: p.participant_index ?? 0
-            };
-            upsertRow(row);
-          }
-          renderTable();
-        } catch {}
-      });
-      es.addEventListener('liability', (e) => {
-        setSSE('liability');
-        try {
-          const payload = JSON.parse(e.data);
-          const body = payload?.data || {};
-          const lsid = (body.lightspeed_id || '').toString();
-          const emails = new Set((body.participants || []).map(p => (p.email || '').toLowerCase()));
-          const nameKeys = new Set((body.participants || []).map(p => `${(p.first_name||'').toLowerCase()}_${(p.last_name||'').toLowerCase()}`));
-          for (const [key, r] of Array.from(store.entries())) {
-            const byTag = lsid && r.lightspeed_id && String(r.lightspeed_id) === lsid;
-            const byEmail = r.email && emails.has(String(r.email).toLowerCase());
-            const byName = nameKeys.has(`${(r.first_name||'').toLowerCase()}_${(r.last_name||'').toLowerCase()}`);
-            if (byTag || byEmail || byName) { store.delete(key); if (hiddenSet.has(key)) hiddenSet.delete(key); }
-          }
-          renderTable();
-        } catch {}
-      });
+      es.addEventListener('intake', scheduleTickRefresh);
+      es.addEventListener('liability', scheduleTickRefresh);
       es.onerror = () => setSSE('error');
     })();
 
@@ -688,6 +679,9 @@
         basis: inpBasis().value,
         ageAdj: inpAgeAdj().value
       });
+      current.calculation=res.din == null ? null : {skierCode:res.code,din:res.din,bootSoleLengthMm:Number(inpBSL().value)};
+      document.getElementById('reviewTechnician').checked=false;
+      document.getElementById('btnOpenLiab').disabled=true;
       reflectBaseDin(res.din);
       outSum().textContent = (res.din==null) ? res.explain : `Skier code ${res.code}, ${res.explain}`;
       document.getElementById("btnCopy").disabled = res.din == null;
@@ -744,16 +738,34 @@
         openDINModal({ ...p, waiver_id: activeIntakeMeta.waiver_id }, { ...activeIntakeMeta, email: p.email });
       } catch (error) { showToast(error.message); }
     });
-    document.getElementById("btnOpenLiab").addEventListener("click", ()=>{
-      if (!current) return;
-      const url = buildLiabilityUrl({
-        email: current.email,
-        lightspeed_id: current.lightspeed_id,
-        first_name: current.first_name,
-        last_name:  current.last_name
-      });
-      window.open(url, "_blank", "noopener");
+    document.getElementById('reviewTechnician').addEventListener('change',()=>{
+      document.getElementById('btnOpenLiab').disabled=!(current?.calculation&&document.getElementById('reviewTechnician').checked);
     });
+    document.getElementById('btnOpenLiab').addEventListener('click',async event=>{
+      if(!current?.calculation||!document.getElementById('reviewTechnician').checked){showToast('Review the current calculator values before copying them.');return;}
+      const technicianReview={reviewed:true,waiverId:current.waiver_id,participantIndex:current.participant_index,
+        participant:{first_name:current.first_name,last_name:current.last_name},
+        source:{weight_lb:current.weight_lb,height_in:current.height_in,age:current.age,skier_type:current.skier_type},
+        calculated:{...current.calculation}};
+      await openLiabilityDraft({waiverId:current.waiver_id,participantIndex:current.participant_index},event.currentTarget,technicianReview);
+    });
+
+    document.getElementById('checkWaiverFields').addEventListener('click',async()=>{
+      const output=document.getElementById('waiverSetupResult');output.textContent='Checking configured templates…';
+      try{const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'template-check'})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Template check failed.');output.textContent=JSON.stringify(data.templates,null,2);}catch(error){output.textContent=error.message;}
+    });
+    document.getElementById('testWaiverPreview').addEventListener('click',async()=>{
+      const tab=window.open('about:blank','_blank');if(!tab){showToast('Allow popups for the unsigned test.');return;}tab.opener=null;tab.document.body.textContent='Preparing fictional unsigned test. Do not sign it.';
+      try{const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'synthetic-preview'})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Test preview failed.');const url=new URL(data.url);if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected test destination.');if(!tab.closed)tab.location.replace(url.toString());}catch(error){if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
+    });
+
+    window.addEventListener('staff-session-ended',()=>{
+      refreshGeneration++; dinRequestId++; current=null; activeIntakeDetails=null; activeIntakeMeta=null;
+      store.clear(); hiddenSet.clear(); tb.replaceChildren();
+      dinModal.classList.add('hidden'); dinModal.classList.remove('flex');
+      document.getElementById('intakeLoadStatus').textContent='Staff sign-in is required.';
+    });
+    window.addEventListener('staff-session-ready',refreshPoll);
 
     // -----------------------
     // Boot
@@ -763,7 +775,7 @@
       reflectHiddenToggle();
       setDefaultDatesToday();
       try {
-        const r = await fetch("/api/config", { headers: { 'Cache-Control':'no-cache' }});
+        const r = await StaffSession.fetch("/api/config", { headers: { 'Cache-Control':'no-cache' }});
         const cfg = await r.json();
         LIABILITY_WAIVER_ID = cfg.liability_waiver_id || "";
       } catch (e) {

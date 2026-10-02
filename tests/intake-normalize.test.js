@@ -78,3 +78,13 @@ test('split height must agree with other supplied height fields', () => {
   waiver.participants[0].fields[2].value='180.34';
   assert.equal(normalizeIntake(waiver,now).participants[0].height_in,71);
 });
+
+test('actual intake check-one label normalizes explicit single selections', () => {
+  for (const [value, expected] of [['I','I'],['II','II'],['III','III'],[['II'],'II'],['["III"]','III'],['<span>Type II</span>','II']]) {
+    const data = normalizeIntake({waiverId:'synthetic_checked',participants:[{isMinor:true,dob:'2016-01-01',customParticipantFields:{skier:{displayText:'Skier Type: (Check One) *',value}}}]},now);
+    assert.equal(data.participants[0].skier_type,expected,JSON.stringify(value));
+  }
+});
+test('check-one selections cannot silently choose from empty or conflicting choices', () => {
+  for (const value of [[],[['II']],[true],['I','II'],['II','II'],'["I","III"]','I, II','I / III','[malformed]',{I:true,II:false}]) assert.equal(skierType(value),'',JSON.stringify(value));
+});

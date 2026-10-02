@@ -1,3 +1,4 @@
+const { requireStaff } = require('../lib/staff-auth');
 // api/hidden.js
 const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL || "";
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
@@ -12,9 +13,12 @@ async function upstash(path) {
 }
 const enc = s => encodeURIComponent(String(s));
 
-export const config = { api: { bodyParser: true } };
 
-export default async function handler(req, res) {
+
+module.exports = async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { await requireStaff(req); } catch (error) { return res.status(error.status || 503).json({ error:error.message }); }
+
   try {
     if (!REDIS_URL || !REDIS_TOKEN) {
       return res.status(200).json({ ok: true, keys: [] });

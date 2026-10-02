@@ -1,0 +1,237 @@
+/* Phone-only overrides. Keep the existing iPad/tablet layouts at 640px and up (including iPad mini portrait). */
+@media (max-width: 639px) {
+  .rental-page,
+  .rental-page *,
+  .rental-page *::before,
+  .rental-page *::after {
+    box-sizing: border-box;
+  }
+
+  .rental-page {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .rental-tech main {
+    padding: 72px 12px 24px;
+  }
+
+  .rental-tech main > div {
+    padding: 16px;
+  }
+
+  .rental-page h1 {
+    font-size: 24px;
+    line-height: 1.25;
+  }
+
+  .rental-page .rental-page-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .rental-page .rental-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .rental-page .rental-date-range {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 10px;
+  }
+
+  .rental-page .rental-date-range label[for="fromDate"] { grid-area: 1 / 1; }
+  .rental-page .rental-date-range label[for="toDate"] { grid-area: 1 / 2; }
+  .rental-page .rental-date-range #fromDate { grid-area: 2 / 1; }
+  .rental-page .rental-date-range #toDate { grid-area: 2 / 2; }
+  .rental-page .rental-date-range #applyRange { grid-column: 1 / -1; }
+
+  .rental-page .rental-toolbar #sseStatus {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .rental-page input,
+  .rental-page select,
+  .rental-page textarea {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    font: inherit;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+
+  .rental-page input,
+  .rental-page select {
+    min-height: 44px;
+  }
+
+  .rental-tech .input,
+  .rental-tech .select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #f9fafb;
+    padding: 10px;
+  }
+
+  .rental-page button {
+    min-height: 44px;
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .rental-tech .btn,
+  .rental-tech .btn-outline,
+  .rental-tech .btn-danger {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .rental-tech .btn { background: #111; color: #fff; border-color: #111; }
+  .rental-tech .btn-outline { background: #fff; color: #111; }
+  .rental-tech .btn-danger { background: #fff; color: #b91c1c; border-color: #fca5a5; }
+  .rental-tech .link { color: #2563eb; text-decoration: underline; }
+
+  .rental-page .rental-table-wrap { overflow: visible; }
+
+  .rental-page .rental-table,
+  .rental-page .rental-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Retain column headers for assistive technology, alongside visible row labels. */
+  .rental-page .rental-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .rental-page .rental-table tbody tr {
+    display: block;
+    margin: 12px 0;
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .rental-page .rental-table td[data-label] {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+    white-space: normal;
+    line-height: 1.45;
+  }
+
+  .rental-page .rental-table td[data-label]::before {
+    content: attr(data-label);
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .rental-page .rental-table td > span,
+  .rental-page .rental-row-actions {
+    min-width: 0;
+  }
+
+  .rental-page .rental-table td.rental-actions-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    border-bottom: 0;
+  }
+
+  .rental-page .rental-actions-cell::before { flex-basis: 100%; }
+
+  .rental-page .rental-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .rental-page .rental-actions-cell button { flex: 1 1 110px; }
+  .rental-page .rental-table td[colspan] { display: block; padding: 8px 0; border: 0; }
+
+  .rental-returns { padding: 72px 12px 24px; }
+  .rental-returns .wrap,
+  .rental-returns .card { min-width: 0; }
+
+  .rental-page .rental-filters,
+  .rental-page .rental-export {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .rental-page .rental-filters > div,
+  .rental-page .rental-export > div { min-width: 0; }
+  .rental-page .rental-filters > div:first-child,
+  .rental-page .rental-filters > div:nth-child(4),
+  .rental-page .rental-export > button,
+  .rental-page .rental-export > .toast { grid-column: 1 / -1; }
+  .rental-page .rental-filters .right { margin-left: 0; align-self: center; }
+
+  .rental-page #dinModal {
+    padding: 12px;
+    align-items: flex-start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    z-index: 10002;
+  }
+
+  .rental-page .rental-din-panel,
+  .rental-page dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .rental-page .rental-din-panel { margin: auto; padding: 16px; }
+  .rental-page dialog { width: calc(100% - 24px); padding: 16px; }
+  .rental-page .rental-dialog-header { gap: 12px; }
+  .rental-page .rental-dialog-header h3 { min-width: 0; }
+  .rental-page .rental-dialog-header button { flex-shrink: 0; }
+  #dinBody,
+  #dinBody > div,
+  #dinBody dd { min-width: 0; }
+  #dinBody { grid-template-columns: minmax(0, 1fr); }
+  #dinBody dl { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+  #dinBody .rental-tech-inputs,
+  #dinBody .rental-bindings { grid-template-columns: minmax(0, 1fr); }
+
+  .rental-page .rental-dialog-actions { flex-wrap: wrap; }
+  .rental-page .rental-dialog-actions button { flex: 1 1 120px; }
+  .rental-page #toast { max-width: calc(100vw - 32px); }
+
+  /* Native date controls need room for their calendar icon on small phones. */
+  @media (max-width: 359px) {
+    .rental-page .rental-date-range,
+    .rental-page .rental-filters,
+    .rental-page .rental-export { grid-template-columns: minmax(0, 1fr); }
+    .rental-page .rental-date-range label[for="toDate"] { grid-area: 3 / 1; }
+    .rental-page .rental-date-range #toDate { grid-area: 4 / 1; }
+  }
+}
