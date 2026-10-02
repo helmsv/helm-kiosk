@@ -6,6 +6,29 @@ const { normalizeIntake } = require('../lib/intake-normalize');
 const templateCache = new Map();
 const OPERATIONS = new Set(['intake-read', 'intake-template', 'liability-template', 'prefill-build', 'prefill-create', 'prefill-response']);
 
+function syntheticTechnicalFields(payload, definition) {
+  // Only the fixed synthetic preview may expose these three configuration
+  // destinations and its outgoing defaults. Never inspect request/source data.
+  const groups = [['Skier Code'], ['Initial Indicator Value', 'DIN'], ['Boot Sole Length (mm)']];
+  const fields = [
+    ...fieldList(definition, true).map(field => ({ ...field, scope: 'participant' })),
+    ...fieldList(definition, false).map(field => ({ ...field, scope: 'waiver' })),
+  ];
+  const result = [];
+  for (const labels of groups) {
+    const matches = fields.filter(field => labels.includes(field.label));
+    if (matches.length !== 1) continue;
+    const { label, guid, scope } = matches[0];
+    if (typeof guid !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(guid)) continue;
+    const values = scope === 'participant' ? payload.participants?.[0]?.customFields : payload.customWaiverFields;
+    if (!values || !Object.prototype.hasOwnProperty.call(values, guid)) continue;
+    const value = values[guid];
+    if (typeof value !== 'string' || value.length > 128) continue;
+    result.push({ label, guid, scope, value });
+  }
+  return result;
+}
+
 async function during(operation, action) {
   try { return await action(); }
   catch (error) {
@@ -48,7 +71,7 @@ module.exports = async function handler(req, res) {
     const intakeId = process.env.INTAKE_WAIVER_ID || process.env.INTAKE_TEMPLATE_ID;
     const liabilityId = process.env.LIABILITY_WAIVER_ID || process.env.LIABILITY_TEMPLATE_ID || process.env.SW_TEMPLATE_LIABILITY;
     if (!intakeId || (staffStage && !liabilityId)) return res.status(503).json({ error: 'Smartwaiver templates are not configured.' });
-    let draft, templateId;
+    let draft, templateId, technicalFields;
     if(input.stage === 'template-check') {
       const definitions=await Promise.all([template(intakeId, 'intake-template'),template(liabilityId, 'liability-template')]);
       const summarize=definition=>({title:definition.title||'',publishedVersion:definition.publishedVersion,participantFields:fieldList(definition,true).map(({label,fieldType,type})=>({label,fieldType,type})),waiverFields:fieldList(definition,false).map(({label,fieldType,type})=>({label,fieldType,type}))});
@@ -67,6 +90,7 @@ module.exports = async function handler(req, res) {
       const participant=normalizeIntake(waiver).participants[0];
       const review={reviewed:true,waiverId:waiver.waiverId,participantIndex:0,participant:{first_name:participant.first_name,last_name:participant.last_name},source:{weight_lb:participant.weight_lb,height_in:participant.height_in,age:participant.age,skier_type:participant.skier_type},calculated:{skierCode:'M',din:'7',bootSoleLengthMm:315}};
       draft=await during('prefill-build', () => buildLiabilityPrefill(waiver,intake,liability,0,review));templateId=liabilityId;
+      technicalFields = syntheticTechnicalFields(draft.payload, liability);
     } else if (input.stage === 'liability') {
       if (typeof input.waiverId !== 'string' || !/^[a-zA-Z0-9_-]{6,128}$/.test(input.waiverId)) return res.status(400).json({ error: 'A valid intake ID is required.' });
       const [data, intake, liability] = await Promise.all([
@@ -83,7 +107,7 @@ module.exports = async function handler(req, res) {
       if (typeof result.prefill?.uuid !== 'string' || !result.prefill.uuid) throw new Error('Missing Smartwaiver prefill ID.');
       return safePrefillUrl(result.prefill.url, draft.tag, result.prefill.uuid);
     });
-    return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, reviewRequired: true });
+    return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, reviewRequired: true, ...(technicalFields ? { technicalFields } : {}) });
   } catch (error) {
     const status = [401,403,503].includes(error.status) ? error.status : error instanceof SyntaxError ? 400 : error.statusCode === 400 ? 400 : error.status === 429 || error.statusCode === 429 ? 429 : 502;
     // Validation messages are ours. Upstream bodies can contain customer details.

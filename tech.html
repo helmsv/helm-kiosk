@@ -772,13 +772,21 @@
     });
     document.getElementById('testWaiverPreview').addEventListener('click',async()=>{
       const tab=window.open('about:blank','_blank');if(!tab){showToast('Allow popups for the unsigned test.');return;}tab.opener=null;tab.document.body.textContent='Preparing fictional unsigned test. Do not sign it.';
-      try{const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'synthetic-preview'})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Test preview failed.');const url=new URL(data.url);if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected test destination.');if(!tab.closed)tab.location.replace(url.toString());}catch(error){if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
+      const output=document.getElementById('waiverSetupResult');output.textContent='Preparing fictional test field check…';
+      try{
+        const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'synthetic-preview'})});
+        const data=await response.json();if(!response.ok)throw new Error(data.error||'Test preview failed.');
+        const url=new URL(data.url);if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected test destination.');
+        output.textContent='Fictional test field mapping. Check the opened form to confirm its selections; an accepted request alone does not verify them.\n'+JSON.stringify(data.technicalFields||[],null,2);
+        if(!tab.closed)tab.location.replace(url.toString());
+      }catch(error){output.textContent=error.message;if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
     });
 
     window.addEventListener('staff-session-ended',()=>{
       refreshGeneration++; dinRequestId++; current=null; activeIntakeDetails=null; activeIntakeMeta=null;
       store.clear(); hiddenSet.clear(); tb.replaceChildren();
       dinDialog.hide({ restoreFocus: false });
+      document.getElementById('waiverSetupResult').textContent='';
       document.getElementById('intakeLoadStatus').textContent='Staff sign-in is required.';
     });
     window.addEventListener('staff-session-ready',refreshPoll);
