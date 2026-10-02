@@ -36,7 +36,8 @@ test('dialog no longer defaults missing skier type, prior BSL, or stale async se
   assert.match(html,/inpType\(\)\.value = current\.skier_type \|\| ""/);
   assert.doesNotMatch(html,/inpBSL\(\)\.value = prior\.bsl_mm/);
   assert.match(html,/if \(requestId !== dinRequestId\) return/);
-  assert.match(html,/dinClose\.addEventListener\("click", \(\)=>\{ dinRequestId\+\+/);
+  assert.match(html,/dinClose\.addEventListener\("click", closeDINModal\)/);
+  assert.match(html,/function closeDINModal\(\)\{\s*dinRequestId\+\+/);
 });
 
 test('skier dropdown order is placeholder, I, II, III',()=>{

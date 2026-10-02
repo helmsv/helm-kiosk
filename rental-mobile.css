@@ -1,4 +1,87 @@
-/* Phone-only overrides. Keep the existing iPad/tablet layouts at 640px and up (including iPad mini portrait). */
+/* The DIN dialog must fit its own viewport, including a short embedded iframe.
+   Keep its header outside the scroll region so Close is always reachable. */
+.rental-page #dinModal {
+  box-sizing: border-box;
+  padding: 12px;
+  align-items: flex-start;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  z-index: 10002;
+}
+
+.rental-page #dinModal .rental-din-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  overflow: hidden;
+}
+
+.rental-page #dinModal .rental-dialog-header {
+  flex: 0 0 auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.rental-page #dinModal .rental-dialog-header h3 { min-width: 0; }
+.rental-page #dinModal #dinClose { flex-shrink: 0; min-height: 44px; }
+
+.rental-page #dinBody {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+}
+
+.rental-page #dinBody > div,
+.rental-page #dinBody dd { min-width: 0; }
+
+/* Ordinary <style> tags do not compile Tailwind @apply. These modal controls
+   therefore use real CSS at every width, without restyling the tablet table. */
+.rental-page #dinModal .input,
+.rental-page #dinModal .select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.rental-page #dinModal .btn,
+.rental-page #dinModal .btn-outline {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.rental-page #dinModal .btn { background: #111; color: #fff; border-color: #111; }
+.rental-page #dinModal .btn-outline { background: #fff; color: #111; }
+.rental-page #dinModal button:disabled { opacity: 0.5; cursor: not-allowed; }
+.rental-page #dinModal :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.rental-page #dinModal .tiny { font-size: 12px; line-height: 1.45; color: #6b7280; }
+.rental-page #dinModal .pill { display: inline-block; padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; }
+.rental-page #dinModal .rental-dialog-actions { flex-wrap: wrap; }
+
+/* Only page/table reflow is phone-only. Preserve iPad layouts at 640px and up. */
 @media (max-width: 639px) {
   .rental-page,
   .rental-page *,
@@ -191,15 +274,6 @@
   .rental-page .rental-export > .toast { grid-column: 1 / -1; }
   .rental-page .rental-filters .right { margin-left: 0; align-self: center; }
 
-  .rental-page #dinModal {
-    padding: 12px;
-    align-items: flex-start;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    z-index: 10002;
-  }
-
-  .rental-page .rental-din-panel,
   .rental-page dialog {
     width: 100%;
     max-width: 100%;
@@ -209,7 +283,7 @@
     overscroll-behavior: contain;
   }
 
-  .rental-page .rental-din-panel { margin: auto; padding: 16px; }
+  .rental-page .rental-din-panel { padding: 16px; }
   .rental-page dialog { width: calc(100% - 24px); padding: 16px; }
   .rental-page .rental-dialog-header { gap: 12px; }
   .rental-page .rental-dialog-header h3 { min-width: 0; }

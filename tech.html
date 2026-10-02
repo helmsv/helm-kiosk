@@ -84,11 +84,11 @@
   <div id="toast" class="fixed bottom-4 right-4 hidden rounded-xl bg-black text-white px-4 py-2 text-sm shadow-lg"></div>
 
   <!-- DIN modal -->
-  <div id="dinModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+  <div id="dinModal" role="dialog" aria-modal="true" aria-labelledby="dinTitle" aria-hidden="true" tabindex="-1" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
     <div class="rental-din-panel bg-white rounded-2xl shadow-2xl p-6 w-[920px] max-w-[95vw]">
       <div class="rental-dialog-header flex items-start justify-between mb-3">
-        <h3 class="text-lg font-semibold">DIN Calculator (pre-Liability)</h3>
-        <button id="dinClose" class="btn-outline">Close</button>
+        <h3 id="dinTitle" class="text-lg font-semibold">DIN Calculator (pre-Liability)</h3>
+        <button id="dinClose" type="button" class="btn-outline">Close</button>
       </div>
 
       <div id="dinBody" class="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -112,12 +112,12 @@
 
           <div class="rental-tech-inputs grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs text-gray-700 mb-1">Boot Sole Length (mm)</label>
+              <label for="inp_bsl" class="block text-xs text-gray-700 mb-1">Boot Sole Length (mm)</label>
               <input id="inp_bsl" type="number" min="200" max="420" step="1" class="input" placeholder="e.g. 315">
               <p id="bsl_hint" class="tiny mt-1"></p>
             </div>
             <div>
-              <label class="block text-xs text-gray-700 mb-1">Skier Type</label>
+              <label for="inp_type" class="block text-xs text-gray-700 mb-1">Skier Type</label>
               <select id="inp_type" class="select">
                 <option value="" selected>Select skier type</option>
                 <option value="I">Type I</option>
@@ -126,7 +126,7 @@
               </select>
             </div>
             <div>
-              <label class="block text-xs text-gray-700 mb-1">Age Adjustment</label>
+              <label for="inp_ageAdj" class="block text-xs text-gray-700 mb-1">Age Adjustment</label>
               <select id="inp_ageAdj" class="select">
                 <option value="auto" selected>Auto (≤9 or ≥50 → −1)</option>
                 <option value="none">No adjustment</option>
@@ -134,7 +134,7 @@
               </select>
             </div>
             <div>
-              <label class="block text-xs text-gray-700 mb-1">Basis</label>
+              <label for="inp_basis" class="block text-xs text-gray-700 mb-1">Basis</label>
               <select id="inp_basis" class="select">
                 <option value="weight" selected>Weight</option>
                 <option value="height">Height</option>
@@ -182,18 +182,19 @@
             <span>I reviewed this participant, the measured boot sole length, skier code and calculated DIN against current shop procedures.</span>
           </label>
           <p class="tiny">The reviewed code, DIN and boot sole length will be copied. Enter the final indicator settings separately on the final waiver.</p>
+          <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
           <div class="rental-dialog-actions mt-4 flex items-center gap-3">
             <button id="btnCopy" class="btn-outline">Copy All <span class="kbd">⌘C</span></button>
             <button id="btnOpenLiab" class="btn">Open Liability</button>
           </div>
 
-          <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
         </div>
       </div>
     </div>
   </div>
 
   <script src="/rental-data.js"></script>
+  <script src="/rental-dialog.js"></script>
   <script src="/staff-session.js"></script>
 <script>
     let LIABILITY_WAIVER_ID = "";
@@ -412,8 +413,7 @@
               if (!waiverId) { showToast("No intake ID on row."); return; }
               const requestId = ++dinRequestId;
               current = null;
-              dinModal.classList.add("hidden");
-              dinModal.classList.remove("flex");
+              dinDialog.hide({ restoreFocus: false });
               try {
                 const details = await fetchIntakeDetails(waiverId);
                 const p = pickParticipant(details, pindex, waiverId);
@@ -442,7 +442,7 @@
                   skier_type:   normalizeSkierType(p.skier_type || "")
                 };
 
-                openDINModal(merged, { email: merged.email, lightspeed_id: lsid, first_name: merged.first_name, last_name: merged.last_name });
+                openDINModal(merged, { email: merged.email, lightspeed_id: lsid, first_name: merged.first_name, last_name: merged.last_name }, btn);
               } catch (e) {
                 if (requestId === dinRequestId) showToast(e.message || "Could not load the selected intake.");
               }
@@ -663,6 +663,17 @@
     let current=null;
     let dinRequestId=0;
     let activeIntakeDetails=null, activeIntakeMeta=null;
+    const dinDialog = RentalDialog.create(dinModal, {
+      initialFocus: dinClose,
+      scrollRegion: document.getElementById('dinBody'),
+      returnFocusFallback: document.getElementById('refreshBtn'),
+      onDismiss: closeDINModal
+    });
+    function closeDINModal(){
+      dinRequestId++;
+      current = null;
+      dinDialog.hide();
+    }
 
     function reflectBaseDin(val){
       const s=(val==null||!Number.isFinite(val))?"—":Number(val).toFixed(2);
@@ -686,7 +697,7 @@
       outSum().textContent = (res.din==null) ? res.explain : `Skier code ${res.code}, ${res.explain}`;
       document.getElementById("btnCopy").disabled = res.din == null;
     }
-    function openDINModal(p, meta){
+    function openDINModal(p, meta, trigger){
       current = {
         waiver_id: p.waiver_id,
         participant_index: p.participant_index,
@@ -714,11 +725,10 @@
       bslHint().textContent = "Enter the measured sole length of the boot being fitted. Previous rentals are not used.";
       reflectBaseDin(null);
       outSum().textContent = "";
-      dinModal.classList.remove("hidden");
-      dinModal.classList.add("flex");
       computeAndRender();
+      dinDialog.show(trigger);
     }
-    dinClose.addEventListener("click", ()=>{ dinRequestId++; dinModal.classList.add("hidden"); dinModal.classList.remove("flex"); current = null; });
+    dinClose.addEventListener("click", closeDINModal);
     ["change","keyup","input"].forEach(evt=>{
       inpBSL().addEventListener(evt, computeAndRender);
       inpType().addEventListener(evt, computeAndRender);
@@ -762,7 +772,7 @@
     window.addEventListener('staff-session-ended',()=>{
       refreshGeneration++; dinRequestId++; current=null; activeIntakeDetails=null; activeIntakeMeta=null;
       store.clear(); hiddenSet.clear(); tb.replaceChildren();
-      dinModal.classList.add('hidden'); dinModal.classList.remove('flex');
+      dinDialog.hide({ restoreFocus: false });
       document.getElementById('intakeLoadStatus').textContent='Staff sign-in is required.';
     });
     window.addEventListener('staff-session-ready',refreshPoll);

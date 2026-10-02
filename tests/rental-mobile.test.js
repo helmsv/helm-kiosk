@@ -9,8 +9,14 @@ const tech = read('tech.html');
 const returns = read('returns.html');
 const css = read('rental-mobile.css');
 
-test('all mobile styles are inside the phone breakpoint, never iPad widths', () => {
-  const source = css.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+test('page/table reflow is phone-only; global overrides are scoped to the DIN dialog', () => {
+  const allStyles = css.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const phoneStart = allStyles.indexOf('@media (max-width: 639px) {');
+  assert.ok(phoneStart > 0);
+  for (const [, selectors] of allStyles.slice(0, phoneStart).matchAll(/([^{}]+)\{[^{}]*\}/g)) {
+    for (const selector of selectors.split(',')) assert.match(selector.trim(), /^\.rental-page #din(?:Modal|Body)\b/);
+  }
+  const source = allStyles.slice(phoneStart);
   assert.ok(source.startsWith('@media (max-width: 639px) {'));
   let depth = 0;
   for (let i = source.indexOf('{'); i < source.length; i++) {
@@ -52,7 +58,8 @@ test('phone overrides allow wrapping and scrolling rather than clipping content'
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.rental-page \.rental-toolbar\s*\{[^}]*display:\s*grid/);
   assert.match(css, /\.rental-page \.rental-row-actions\s*\{[^}]*flex-wrap:\s*wrap/);
-  assert.match(css, /\.rental-page \.rental-din-panel,\s*\.rental-page dialog\s*\{[^}]*max-height:\s*calc\(100dvh - 24px\)[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\.rental-page dialog\s*\{[^}]*max-height:\s*calc\(100dvh - 24px\)[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\.rental-page #dinBody\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/);
   assert.match(css, /\.rental-page button\s*\{[^}]*min-height:\s*44px/);
   assert.doesNotMatch(css, /\.rental-page\s*\{[^}]*overflow(?:-x)?:\s*hidden/);
 });
@@ -63,6 +70,18 @@ test('both pages retain syntactically valid inline JavaScript', () => {
       assert.doesNotThrow(() => new vm.Script(script, { filename: name + '.html' }));
     }
   }
+});
+
+test('DIN warnings precede the final action row so short-frame max scroll reveals the buttons', () => {
+  const modal = tech.slice(tech.indexOf('  <!-- DIN modal -->'), tech.indexOf('  <script src="/rental-data.js">'));
+  const actions = modal.indexOf('<div class="rental-dialog-actions');
+  assert.ok(actions >= 0, 'the final action row is present');
+  for (const warning of ['I reviewed this participant', 'Enter the final indicator settings separately', 'Always verify against current ISO 11088/manufacturer charts']) {
+    const index = modal.indexOf(warning);
+    assert.ok(index >= 0 && index < actions, `${warning} remains present before the buttons`);
+  }
+  const afterActions = modal.slice(modal.indexOf('</div>', actions) + '</div>'.length);
+  assert.match(afterActions, /^\s*(?:<\/div>\s*)+$/, 'no trailing content can push actions out of a short scrollport');
 });
 
 test('Pending Liability renders labeled synthetic rows without changing row actions', () => {
