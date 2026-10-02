@@ -145,8 +145,8 @@ test('welcome adult and guardian normalize formatted phone without blocking a dr
   for (const minors of [false, true]) {
     const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134' });
     const person = minors ? draft.payload.guardian : draft.payload.participants[0];
-    assert.equal(person.phone, '+12025550134');
-    assert.equal(draft.skippedFields.length, 0);
+    assert.equal(person.phone, minors ? undefined : '+12025550134');
+    assert.equal(draft.skippedFields.length, minors ? 1 : 0);
     const invalid = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134 ext 9' });
     assert.equal((minors ? invalid.payload.guardian : invalid.payload.participants[0]).phone, undefined);
     assert.equal(invalid.payload.email, 'test@example.com');
@@ -169,7 +169,8 @@ test('liability normalizes each family and emergency phone without mutating sign
   const before = JSON.stringify(w);
   const result = buildLiabilityPrefill(w, source, target);
   assert.equal(result.payload.participants[0].phone, '+12025550134');
-  assert.equal(result.payload.guardian.phone, '+442079460018');
+  assert.equal(result.payload.guardian.phone, undefined);
+  assert.ok(result.skippedFields.some(x => x.startsWith('Guardian: Phone')));
   assert.equal(result.payload.emergencyContactPhone, '2025550135');
   assert.equal(JSON.stringify(w), before);
   w.guardian.phone = '+1 (202) 555-0134 ext 9';
@@ -212,4 +213,45 @@ test('malformed optional phones are omitted and audited without object coercion'
     assert.equal(draft.payload.participants[0].phone, undefined);
     assert.match(draft.skippedFields[0], /Phone.*enter this phone number/);
   }
+});
+
+test('public guardian matched-record regression omits participant-only phone while retaining UUID tag', () => {
+  const input = { email: 'snowos-unsigned-test@example.com', dob: '1990-01-01', minors: true, first_name: 'SnowOS', last_name: 'Unsigned Test', mobile: '+1 (202) 555-0134', lightspeed_id: '01234567-89ab-cdef-0123-456789abcdef' };
+  const before = JSON.stringify(input);
+  const draft = buildIntakePrefill(input);
+  assert.deepEqual(draft.payload.guardian, { firstName: 'SnowOS', lastName: 'Unsigned Test', dob: '1990-01-01', participant: false });
+  assert.equal(draft.payload.adult, false);
+  assert.equal(draft.payload.email, input.email);
+  assert.equal(draft.payload.externalId, undefined);
+  assert.equal(draft.tag, `ls_${input.lightspeed_id}`);
+  assert.match(draft.skippedFields[0], /Guardian: Phone.*participant-only/);
+  assert.ok(!draft.copiedFields.includes('Guardian: Phone'));
+  assert.doesNotMatch(JSON.stringify(draft.skippedFields), /202|0134/);
+  assert.equal(JSON.stringify(input), before);
+});
+test('minor-only final guardian keeps identity and relationship but omits phone and gender by API role', () => {
+  const w = { ...waiver([child({ phone: '+1 (202) 555-0134', gender: 'Female' })]), guardian: { firstName: 'Guardian', lastName: 'Example', dob: '1980-01-01', relationship: 'Parent', phone: '+1 (202) 555-0135', gender: 'Male' } };
+  const before = JSON.stringify(w);
+  const { payload, skippedFields, copiedFields } = buildLiabilityPrefill(w, source, target);
+  assert.deepEqual(payload.guardian, { firstName: 'Guardian', lastName: 'Example', dob: '1980-01-01', relationship: 'Parent', participant: false });
+  assert.equal(payload.participants[0].phone, '+12025550134');
+  assert.equal(payload.participants[0].gender, 'Female');
+  assert.ok(skippedFields.some(x => x.startsWith('Guardian: Phone')));
+  assert.ok(skippedFields.some(x => x.startsWith('Guardian: Gender')));
+  assert.ok(!copiedFields.includes('Guardian: Phone'));
+  assert.equal(JSON.stringify(w), before);
+});
+test('participating guardian retains normalized phone and gender without changing family identities', () => {
+  const w = waiver([adult({ phone: '+1 (202) 555-0134', gender: 'Male', relationship: 'Parent' }), child()]);
+  const before = JSON.stringify(w);
+  const { payload, skippedFields } = buildLiabilityPrefill(w, source, target);
+  assert.equal(payload.guardian.participant, true);
+  assert.equal(payload.guardian.phone, '+12025550134');
+  assert.equal(payload.guardian.gender, 'Male');
+  assert.equal(payload.guardian.relationship, 'Parent');
+  assert.equal(payload.guardian.dob, '1990-04-17');
+  assert.equal(payload.participants.length, 1);
+  assert.equal(payload.participants[0].firstName, 'Child');
+  assert.equal(skippedFields.length, 0);
+  assert.equal(JSON.stringify(w), before);
 });
