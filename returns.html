@@ -463,9 +463,11 @@
       setTimeout(()=>URL.revokeObjectURL(url),1000);
     } catch(error){setToast(error.message);} finally{button.disabled=false;}
   }
-  window.addEventListener('staff-session-ended',()=>{
+  window.addEventListener('staff-session-ended',event=>{
     if(inFlight)inFlight.abort();
-    el('rows').replaceChildren(); el('count').textContent=''; setToast('Staff sign-in is required.');
+    el('rows').replaceChildren(); el('count').textContent='';
+    setToast(event.reason==='unavailable' ? 'Staff verification is temporarily unavailable. Reconnecting…'
+      : event.reason==='closed' ? 'Reconnecting to SnowOS staff access…' : 'Staff sign-in is required.');
     for(const cleanup of [...dialogCleanups.values()])cleanup(null);
     el('returnComment').value=''; el('noteText').value='';
   });

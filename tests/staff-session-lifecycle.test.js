@@ -17,16 +17,19 @@ function deferred() {
 }
 
 class Node extends EventTarget {
-  constructor() { super(); this.hidden = false; this.style = {}; }
+  constructor() { super(); this.hidden = false; this.style = {}; this.children = []; }
   setAttribute() {}
-  replaceChildren() {}
-  appendChild() {}
+  replaceChildren(...children) { this.children = children; }
+  appendChild(child) { this.children.push(child); }
+  get textContent() { return this.children.map(child => typeof child === 'string' ? child : child.textContent || '').join(''); }
+  set textContent(value) { this.children = [value]; }
 }
 
 function harness(fetchImpl = async () => ({ status: 200 })) {
   const host = new Node();
-  const messages = [], requests = [], timers = new Map();
-  let nextTimer = 0;
+  const messages = [], requests = [], timers = new Map(), timerDelays = new Map();
+  let nextTimer = 0, now = Date.now();
+  class Clock extends Date { static now() { return now; } }
   const parent = { postMessage(data, origin) { messages.push({ data, origin }); } };
   host.parent = parent;
   host.location = { href: `${KIOSK_ORIGIN}/tech.html`, origin: KIOSK_ORIGIN };
@@ -37,9 +40,9 @@ function harness(fetchImpl = async () => ({ status: 200 })) {
     body: { prepend() {} },
   };
   const context = {
-    window: host, document, Event, Headers, URL, Date,
-    setTimeout(fn) { const id = ++nextTimer; timers.set(id, fn); return id; },
-    clearTimeout(id) { timers.delete(id); },
+    window: host, document, Event, Headers, URL, Date: Clock,
+    setTimeout(fn, delay) { const id = ++nextTimer; timers.set(id, fn); timerDelays.set(id, delay); return id; },
+    clearTimeout(id) { timers.delete(id); timerDelays.delete(id); },
     fetch: async (url, options) => { requests.push({ url, options }); return fetchImpl(url, options); },
   };
   vm.createContext(context);
@@ -49,12 +52,19 @@ function harness(fetchImpl = async () => ({ status: 200 })) {
     Object.assign(event, { origin, source: sender, data });
     host.dispatchEvent(event);
   }
-  function start(token = TOKEN_A) {
-    send({ type: 'snowos-rentals-session', accessToken: token, expiresAt: Date.now() + 60_000 });
+  function start(token = TOKEN_A, leaseMs = 60_000) {
+    send({ type: 'snowos-rentals-session', accessToken: token, expiresAt: now + leaseMs });
+  }
+  function fireTimers(delay) {
+    for (const [id, fn] of [...timers]) {
+      if (timerDelays.get(id) !== delay) continue;
+      timers.delete(id); timerDelays.delete(id); fn();
+    }
   }
   return {
-    api: host.StaffSession, host, parent, messages, requests, timers, send, start,
-    end: () => send({ type: 'snowos-rentals-session-ended' }),
+    api: host.StaffSession, host, parent, messages, requests, timers, send, start, status, fireTimers,
+    now: () => now, advance: ms => { now += ms; },
+    end: reason => send({ type: 'snowos-rentals-session-ended', ...(reason === undefined ? {} : { reason }) }),
   };
 }
 
@@ -154,4 +164,187 @@ test('a replacement token invalidates old reads even without an explicit session
   upstream.resolve({ status: 200 });
   await assert.rejects(pending, /session changed/);
   assert.equal(ended, 1);
+});
+
+test('same-token valid lease renewals extend expiry without ready events or invalidating in-flight work', async () => {
+  const upstream = deferred();
+  const h = harness(() => upstream.promise);
+  let ready = 0, ended = 0;
+  h.host.addEventListener('staff-session-ready', () => { ready++; });
+  h.host.addEventListener('staff-session-ended', () => { ended++; });
+  h.start();
+  const pending = h.api.fetch('/api/intake-details');
+  await Promise.resolve();
+  h.advance(20_000); h.start(); h.start();
+  upstream.resolve({ status: 200, json: async () => ({ synthetic: true }) });
+  assert.deepEqual(await (await pending).json(), { synthetic: true });
+  assert.equal(ready, 1, 'lease heartbeats must not restart table loads');
+  assert.equal(ended, 0);
+  assert.equal(h.timers.size, 1, 'only the latest expiry timer remains');
+  h.advance(41_000);
+  assert.equal(h.api.isReady(), true, 'the renewed lease replaces the original expiry');
+});
+
+test('first ready waiters resolve once while subsequent valid renewal remains quiet', async () => {
+  const h = harness();
+  let ready = 0;
+  h.host.addEventListener('staff-session-ready', () => { ready++; });
+  const waiting = [h.api.ready(), h.api.ready()];
+  h.start(); await Promise.all(waiting);
+  h.start();
+  assert.equal(ready, 1);
+  assert.equal(h.api.isReady(), true);
+  assert.equal(h.timers.size, 1);
+});
+
+test('end reasons change only wording and always invalidate credentials, old responses and private UI', async () => {
+  const expected = new Map([
+    ['unavailable', 'Staff verification is temporarily unavailable. Reconnecting…'],
+    ['closed', 'Reconnecting to SnowOS staff access…'],
+    ['denied', 'Your staff session ended. Sign in again.'],
+    [undefined, 'Your staff session ended. Sign in again.'],
+    ['unrecognized', 'Your staff session ended. Sign in again.'],
+    ['<script>untrusted reason</script>', 'Your staff session ended. Sign in again.'],
+  ]);
+  for (const [reason, message] of expected) {
+    const upstream = deferred();
+    const h = harness(() => upstream.promise);
+    let ended = 0, emittedReason;
+    h.host.addEventListener('staff-session-ended', event => { ended++; emittedReason = event.reason; });
+    h.start();
+    const pending = h.api.fetch('/api/intake-details');
+    await Promise.resolve();
+    h.end(reason);
+    assert.equal(h.api.isReady(), false, String(reason));
+    assert.equal(h.timers.size, 0, String(reason));
+    assert.equal(ended, 1, 'page handlers must erase data and dialogs');
+    assert.equal(emittedReason, reason === 'unavailable' || reason === 'closed' ? reason : 'denied');
+    assert.ok(h.status.textContent.startsWith(message + ' '), String(reason));
+    assert.equal(h.status.hidden, false);
+    h.start(TOKEN_B);
+    upstream.resolve({ status: 200 });
+    await assert.rejects(pending, /session changed/);
+  }
+});
+
+test('every end reason rejects waiters and never replays queued mutations after reconnection', async () => {
+  for (const reason of ['unavailable', 'closed', 'denied', undefined, 'unknown']) {
+    const h = harness(async () => assert.fail('Queued mutation must not replay'));
+    const ready = h.api.ready();
+    const action = h.api.fetch('/api/rentals-note', { method: 'POST' });
+    h.end(reason);
+    const expected = reason === 'unavailable' ? { message: 'Staff verification is temporarily unavailable. Reconnecting…' }
+      : reason === 'closed' ? { message: 'Reconnecting to SnowOS staff access…' } : /session ended/;
+    await assert.rejects(ready, expected);
+    await assert.rejects(action, expected);
+    h.start(); await Promise.resolve();
+    assert.equal(h.requests.length, 0);
+  }
+});
+
+test('handshakes are deduplicated but host-ready, pageshow and timeout retry still work', async () => {
+  const h = harness();
+  const initial = h.messages.length;
+  const waiting = [h.api.ready(), h.api.ready(), h.api.ready()];
+  assert.equal(h.messages.length, initial, 'reuse the initial outstanding handshake');
+  h.send({ type: 'snowos-rentals-host-ready' });
+  assert.equal(h.messages.length, initial + 1, 'host-ready must always receive a reply');
+  h.host.dispatchEvent(new Event('pageshow'));
+  assert.equal(h.messages.length, initial + 2, 'restoration must always request a session');
+  h.fireTimers(12_000);
+  for (const waiter of waiting) await assert.rejects(waiter, /sign-in is required/);
+  const retry = h.api.ready();
+  assert.equal(h.messages.length, initial + 3, 'a manual retry after timeout sends a new request');
+  h.start(); await retry;
+  assert.equal(h.timers.size, 1);
+});
+
+test('expiry clears the lease and UI before requesting a new session', async () => {
+  const upstream = deferred();
+  const h = harness(() => upstream.promise);
+  let ended = 0;
+  h.host.addEventListener('staff-session-ended', () => { ended++; });
+  h.start();
+  const pending = h.api.fetch('/api/intake-details');
+  await Promise.resolve();
+  h.advance(60_000); h.fireTimers(60_000);
+  assert.equal(h.api.isReady(), false);
+  assert.equal(ended, 1);
+  assert.match(h.status.textContent, /session expired\. Sign in again\./);
+  assert.equal(h.messages.at(-1).data.type, 'snowos-rentals-ready');
+  h.start(); upstream.resolve({ status: 200 });
+  await assert.rejects(pending, /session changed/);
+});
+
+test('a renewal after a throttled expiry timer still invalidates the expired epoch', async () => {
+  const upstream = deferred();
+  const h = harness(() => upstream.promise);
+  let ready = 0, ended = 0;
+  h.host.addEventListener('staff-session-ready', () => { ready++; });
+  h.host.addEventListener('staff-session-ended', () => { ended++; });
+  h.start(); const pending = h.api.fetch('/api/intake-details'); await Promise.resolve();
+  h.advance(60_001); h.start();
+  assert.equal(ended, 1);
+  assert.equal(ready, 2);
+  upstream.resolve({ status: 200 });
+  await assert.rejects(pending, /session changed/);
+});
+
+test('replacement credentials still clear the old epoch and announce a fresh ready transition', () => {
+  const h = harness();
+  let ready = 0, ended = 0;
+  h.host.addEventListener('staff-session-ready', () => { ready++; });
+  h.host.addEventListener('staff-session-ended', () => { ended++; });
+  h.start(); h.start(TOKEN_B);
+  assert.equal(ready, 2); assert.equal(ended, 1);
+  assert.equal(h.api.isReady(), true);
+});
+
+test('unknown message types and untrusted sources cannot change state or force handshakes', () => {
+  const h = harness(); h.start();
+  const before = h.messages.length;
+  for (const data of [null, {}, { type: 'snowos-rentals-pending' }, { type: 'snowos-rentals-session-ended', reason: 'unavailable' }, { type: 'snowos-rentals-host-ready' }]) {
+    h.send(data, 'https://attacker.invalid'); h.send(data, STAFF_ORIGIN, {});
+  }
+  h.send({ type: 'snowos-rentals-pending', accessToken: 'invalid' });
+  assert.equal(h.api.isReady(), true); assert.equal(h.messages.length, before);
+  assert.equal(h.status.hidden, true);
+});
+
+test('invalid or already-expired delivered leases fail closed', () => {
+  for (const patch of [{ accessToken: 'not-a-token' }, { expiresAt: 0 }, { expiresAt: NaN }]) {
+    const h = harness(); h.start();
+    h.send({ type: 'snowos-rentals-session', accessToken: TOKEN_A, expiresAt: h.now() + 60_000, ...patch });
+    assert.equal(h.api.isReady(), false); assert.equal(h.timers.size, 0);
+    assert.equal(h.status.hidden, false);
+  }
+});
+
+test('actual 401 and 403 responses still revoke the lease, discard bodies and request fresh authentication', async () => {
+  for (const status of [401, 403]) {
+    const h = harness(async () => ({ status, json: async () => ({ error: 'synthetic denial' }) }));
+    let ended = 0;
+    h.host.addEventListener('staff-session-ended', () => { ended++; });
+    h.start(); const before = h.messages.length;
+    const response = await h.api.fetch('/api/open-intakes');
+    assert.equal(response.status, status);
+    assert.equal(h.api.isReady(), false); assert.equal(ended, 1);
+    assert.match(h.status.textContent, /session needs to be refreshed/);
+    assert.equal(h.messages.length, before + 1);
+    await assert.rejects(response.json(), /session changed/);
+  }
+});
+
+
+test('pagehide and unexpired token replacement carry closed while true expiry remains denied', () => {
+  const h = harness(); const reasons = [];
+  h.host.addEventListener('staff-session-ended', event => reasons.push(event.reason));
+  h.start(); h.start(TOKEN_B);
+  assert.equal(reasons.at(-1), 'closed');
+  h.host.dispatchEvent(new Event('pagehide'));
+  assert.equal(reasons.at(-1), 'closed');
+  assert.match(h.status.textContent, /Reconnecting to SnowOS staff access/);
+  h.start(); h.advance(60_000); h.fireTimers(60_000);
+  assert.equal(reasons.at(-1), 'denied');
+  assert.match(h.status.textContent, /session expired\. Sign in again/);
 });

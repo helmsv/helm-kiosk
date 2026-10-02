@@ -3,6 +3,7 @@
 (function () {
   const ORIGIN = 'https://helm-snowos.vercel.app';
   let accessToken = '', expiresAt = 0, expiryTimer = null, epoch = 0;
+  let sessionRequested = false, requestTimer = null;
   const listeners = new Set();
   function banner(message) {
     let node = document.getElementById('staff-session-status');
@@ -16,28 +17,54 @@
     const link = document.createElement('a'); link.href = `${ORIGIN}/rentals`; link.target = '_top'; link.textContent = 'Open SnowOS staff sign-in'; node.appendChild(link);
     node.hidden = false;
   }
-  function clear(message = 'Sign in to SnowOS to view customer details.') {
-    epoch++; accessToken = ''; expiresAt = 0; clearTimeout(expiryTimer);
-    for(const waiter of listeners){clearTimeout(waiter.timeout);waiter.reject(new Error('The staff session ended. Start this action again after signing in.'));}listeners.clear();
-    banner(message);
-    window.dispatchEvent(new Event('staff-session-ended'));
+  function resetRequest() {
+    sessionRequested = false; clearTimeout(requestTimer); requestTimer = null;
   }
-  function requestSession() {
-    if (window.parent !== window) window.parent.postMessage({ type:'snowos-rentals-ready' }, ORIGIN);
+  function normalizeReason(reason) {
+    return reason === 'unavailable' || reason === 'closed' ? reason : 'denied';
+  }
+  function endedMessage(reason) {
+    return reason === 'unavailable' ? 'Staff verification is temporarily unavailable. Reconnecting…'
+      : reason === 'closed' ? 'Reconnecting to SnowOS staff access…'
+      : 'Your staff session ended. Sign in again.';
+  }
+  function clear(message = 'Sign in to SnowOS to view customer details.', reason = 'denied') {
+    reason = normalizeReason(reason);
+    epoch++; accessToken = ''; expiresAt = 0; clearTimeout(expiryTimer); resetRequest();
+    const waiterMessage = reason === 'denied' ? 'The staff session ended. Start this action again after signing in.' : endedMessage(reason);
+    for(const waiter of listeners){clearTimeout(waiter.timeout);waiter.reject(new Error(waiterMessage));}listeners.clear();
+    banner(message);
+    const event = new Event('staff-session-ended'); event.reason = reason;
+    window.dispatchEvent(event);
+  }
+  function requestSession(force = false) {
+    if (window.parent === window || (sessionRequested && !force)) return;
+    resetRequest(); sessionRequested = true;
+    requestTimer = setTimeout(resetRequest, 12000);
+    window.parent.postMessage({ type:'snowos-rentals-ready' }, ORIGIN);
   }
   window.addEventListener('message', event => {
     if (event.origin !== ORIGIN || event.source !== window.parent || window.parent === window) return;
     const data = event.data;
-    if (data?.type === 'snowos-rentals-host-ready') { requestSession(); return; }
-    if (data?.type === 'snowos-rentals-session-ended') { clear('Your staff session ended. Sign in again.'); return; }
+    if (data?.type === 'snowos-rentals-host-ready') { requestSession(true); return; }
+    if (data?.type === 'snowos-rentals-session-ended') {
+      const reason = normalizeReason(data.reason);
+      clear(endedMessage(reason), reason); return;
+    }
     if (data?.type !== 'snowos-rentals-session') return;
     if (typeof data.accessToken !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(data.accessToken) || !Number.isFinite(data.expiresAt) || data.expiresAt <= Date.now() + 1000) { clear(); return; }
-    if(accessToken && accessToken !== data.accessToken)clear('Staff session changed.');
+    const renewing = accessToken === data.accessToken && expiresAt > Date.now();
+    if (accessToken && !renewing) {
+      if (expiresAt <= Date.now()) clear('Your staff session expired. Sign in again.');
+      else clear(endedMessage('closed'), 'closed');
+    }
+    resetRequest();
     accessToken = data.accessToken; expiresAt = data.expiresAt;
     clearTimeout(expiryTimer); expiryTimer = setTimeout(() => { clear('Your staff session expired. Sign in again.'); requestSession(); }, Math.max(0, expiresAt - Date.now()));
     const node = document.getElementById('staff-session-status'); if (node) node.hidden = true;
     for (const waiter of listeners){clearTimeout(waiter.timeout);waiter.resolve();}listeners.clear();
-    window.dispatchEvent(new Event('staff-session-ready'));
+    // A healthy lease renewal must not restart data loads or active actions.
+    if (!renewing) window.dispatchEvent(new Event('staff-session-ready'));
   });
   function ready() {
     if (accessToken && expiresAt > Date.now()) return Promise.resolve();
@@ -67,7 +94,7 @@
     return response;
   }
   window.StaffSession = Object.freeze({ ready, fetch:staffFetch, isReady:() => Boolean(accessToken && expiresAt > Date.now()) });
-  window.addEventListener('pagehide', () => clear('Staff session paused.'));
-  window.addEventListener('pageshow', requestSession);
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', requestSession); else requestSession();
+  window.addEventListener('pagehide', () => clear(endedMessage('closed'), 'closed'));
+  window.addEventListener('pageshow', () => requestSession(true));
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => requestSession()); else requestSession();
 })();
