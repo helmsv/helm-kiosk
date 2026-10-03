@@ -74,6 +74,7 @@
         <p>Staff-only setup check. The test preview uses fictional adult data and must not be signed.</p>
         <button id="checkWaiverFields" type="button" class="btn-outline">Check template fields</button>
         <button id="testWaiverPreview" type="button" class="btn-outline">Open unsigned test preview</button>
+        <button id="testWaiverPreviewNonKiosk" type="button" class="btn-outline">Open unsigned test without kiosk mode</button>
         <pre id="waiverSetupResult" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
       </details>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
@@ -769,17 +770,19 @@
       const output=document.getElementById('waiverSetupResult');output.textContent='Checking configured templates…';
       try{const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'template-check'})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Template check failed.');output.textContent=JSON.stringify(data.templates,null,2);}catch(error){output.textContent=error.message;}
     });
-    document.getElementById('testWaiverPreview').addEventListener('click',async()=>{
+    async function openSyntheticPreview(kiosk){
       const tab=window.open('about:blank','_blank');if(!tab){showToast('Allow popups for the unsigned test.');return;}tab.opener=null;tab.document.body.textContent='Preparing fictional unsigned test. Do not sign it.';
       const output=document.getElementById('waiverSetupResult');output.textContent='Preparing fictional test field check…';
       try{
-        const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'synthetic-preview'})});
+        const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'synthetic-preview',syntheticKiosk:kiosk})});
         const data=await response.json();if(!response.ok)throw new Error(data.error||'Test preview failed.');
         const url=new URL(data.url);if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected test destination.');
-        output.textContent='Fictional test field mapping. Check the opened form to confirm its selections; an accepted request alone does not verify them.\n'+JSON.stringify(data.technicalFields||[],null,2);
+        output.textContent='Fictional test only. Check the opened form to confirm its selections; an accepted request alone does not verify them.\n'+JSON.stringify({testEvidence:data.testEvidence,technicalFields:data.technicalFields||[]},null,2);
         if(!tab.closed)tab.location.replace(url.toString());
       }catch(error){output.textContent=error.message;if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
-    });
+    }
+    document.getElementById('testWaiverPreview').addEventListener('click',()=>openSyntheticPreview(true));
+    document.getElementById('testWaiverPreviewNonKiosk').addEventListener('click',()=>openSyntheticPreview(false));
 
     window.addEventListener('staff-session-ended',event=>{
       refreshGeneration++; dinRequestId++; current=null; activeIntakeDetails=null; activeIntakeMeta=null;

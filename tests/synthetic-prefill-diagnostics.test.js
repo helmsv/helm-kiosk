@@ -55,13 +55,48 @@ test('synthetic diagnostics expose exactly the actual three outgoing defaults an
     assert.equal(payloads.length, 1);
     assert.equal(payloads[0].participants[0].firstName, 'SnowOS');
     const values = scope === 'participant' ? payloads[0].participants[0].customFields : payloads[0].customWaiverFields;
-    assert.deepEqual(out.body.technicalFields, defs.map(({ label, guid }) => ({ label, guid, scope, value: values[guid] })));
+    assert.deepEqual(out.body.technicalFields, defs.map(({ label, guid, fieldType, type }) => ({ label, guid, scope, value: values[guid], fieldType, type })));
     assert.deepEqual(out.body.technicalFields.map(field => field.value), ['M', '7', '315']);
     assert.equal(JSON.stringify(out.body.technicalFields).includes(PRIVATE), false);
     assert.equal(JSON.stringify(payloads).includes(PRIVATE), false);
-    for (const field of out.body.technicalFields) assert.deepEqual(Object.keys(field), ['label', 'guid', 'scope', 'value']);
+    for (const field of out.body.technicalFields) assert.deepEqual(Object.keys(field), ['label', 'guid', 'scope', 'value', 'fieldType', 'type']);
     assert.equal(out.body.technicalFields.some(field => field.guid === 'left_toe_not_requested'), false);
   }, { scope });
+});
+
+test('fixed fictional kiosk comparison changes only kiosk, and reports no draft access identifier', async () => scenario(async ({ run, calls, payloads }) => {
+  const first = await run({ stage: 'synthetic-preview' });
+  const second = await run({ stage: 'synthetic-preview', syntheticKiosk: false, email: PRIVATE, kiosk: PRIVATE });
+  assert.equal(first.statusCode, 200); assert.equal(second.statusCode, 200);
+  assert.equal(payloads[0].kiosk, true); assert.equal(payloads[1].kiosk, false);
+  assert.deepEqual(payloads[1], { ...payloads[0], kiosk: false });
+  assert.equal(calls.includes('signed-read'), false);
+  assert.equal(calls.filter(call => call === 'authorize').length, 4);
+  assert.deepEqual(second.body.technicalFields, first.body.technicalFields);
+  for (const [index, out] of [first, second].entries()) {
+    const evidence = out.body.testEvidence;
+    assert.deepEqual(Object.keys(evidence), ['kiosk', 'requestStartedAtUtc', 'responseReceivedAtUtc', 'expiresInSeconds']);
+    assert.equal(evidence.kiosk, index === 0);
+    assert.equal(evidence.expiresInSeconds, 3600);
+    assert.match(evidence.requestStartedAtUtc, /^\d{4}-\d{2}-\d{2}T.*Z$/);
+    assert.ok(Date.parse(evidence.responseReceivedAtUtc) >= Date.parse(evidence.requestStartedAtUtc));
+    assert.doesNotMatch(JSON.stringify(evidence), /synthetic_token|PRIVATE|https:/);
+  }
+}));
+
+test('invalid synthetic comparison mode cannot call provider; liability ignores synthetic overrides', async () => {
+  for (const value of ['false', 0, null, {}, []]) await scenario(async ({ run, calls }) => {
+    const out = await run({ stage: 'synthetic-preview', syntheticKiosk: value });
+    assert.equal(out.statusCode, 400);
+    assert.deepEqual(calls, ['authorize']);
+    assert.deepEqual(Object.keys(out.body), ['error']);
+  });
+  await scenario(async ({ run, payloads }) => {
+    const out = await run({ stage: 'liability', waiverId: 'synthetic_source', syntheticKiosk: false, kiosk: false });
+    assert.equal(out.statusCode, 200);
+    assert.equal(payloads[0].kiosk, true);
+    assert.equal(Object.hasOwn(out.body, 'testEvidence'), false);
+  });
 });
 
 test('the verified DIN alias is reported using its exact metadata label', async () => {

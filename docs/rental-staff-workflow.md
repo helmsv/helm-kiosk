@@ -45,6 +45,24 @@ Run `npm test`. An optional fully mocked Playwright suite is at
 checks read only configured template metadata. The unsigned synthetic preview
 uses fixed fictional adult data and must never be signed.
 
+For support ticket 4100890, the two unsigned test buttons use the same fixed
+fictional payload; only `kiosk` differs. The API accepts `syntheticKiosk` only as
+a boolean on the authenticated `synthetic-preview` stage. Customer stages ignore
+it and retain normal kiosk behavior. Both tests keep fresh template metadata and
+the exact reviewed technician option contract; neither reads signed records.
+The result panel exposes the three outgoing fields' GUID, scope, value,
+`fieldType` and `type`, plus the UTC request/response window and 3600-second
+expiration. These times bound creation; they are not provider-created timestamps.
+An accepted API response does not establish that dropdown selections rendered.
+
+Compare the opened forms without editing, signing, or submitting them. Preserve
+the fictional participant, exact option strings and template version. Do not
+infer behavior for untested dropdowns or templates. A prefill UUID is also part
+of an access URL: never publish it or a live prefill URL in repository logs.
+If needed, give only the fictional test's UUID and UTC window privately to the
+original Smartwaiver support ticket, preferably after its expiration; never
+include API keys, staff tokens, signed-customer identifiers or private URLs.
+
 ### Returns read performance
 
 `GET /api/rentals-outstanding` verifies the current staff session and performs a
