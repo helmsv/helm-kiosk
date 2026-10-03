@@ -77,3 +77,20 @@ Authorized responses include `Server-Timing` durations for `staff`, `schema`, an
 `database` read/connection time. Fixed labels contain no identities, filters,
 tokens, or customer content. Failed staff verification exposes no timing header.
 Use these phases to measure load latency without weakening authorization.
+
+### Blank liability recovery
+
+If Smartwaiver rejects prefill creation with HTTP400, the error tab offers
+**Open blank liability waiver**. The dashboard also has this manual option so
+staff can open the final form without reading a signed intake or attempting
+prefill. Both paths freshly verify the existing SnowOS staff session and use
+only the exact configured, browser-verified final template. Neither calls the
+Smartwaiver API, copies customer answers, supplies DIN values, signs a form,
+nor passes an intake tag. Staff must complete and verify every field; the
+pending intake may remain listed because manual completion has no source link.
+Successful prefill keeps its existing linkage and review behavior unchanged.
+
+The preceding protected deployment769b494 already exhibited prefill-create400;
+rolling back the synthetic kiosk comparison does not establish a recovery for
+that upstream failure. The blank recovery is separate from support4100890's
+accepted prefills with unselected technician dropdowns.
