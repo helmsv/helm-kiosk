@@ -18,6 +18,13 @@ module.exports = async (req, res) => {
   function timing() {
     const finished = performance.now();
     res.setHeader('Server-Timing', `staff;dur=${(authorized - started).toFixed(1)}, schema;dur=${(schemaStarted === undefined ? 0 : (schemaFinished ?? finished) - schemaStarted).toFixed(1)}, database;dur=${(queryStarted === undefined ? 0 : finished - queryStarted).toFixed(1)}`);
+    // Fixed operation and numeric durations only; never log query/rows/auth/error.
+    try { console.info('rental_timing', 'returns', JSON.stringify({
+      staff_ms: Math.round((authorized - started) * 10) / 10,
+      schema_ms: Math.round((schemaStarted === undefined ? 0 : (schemaFinished ?? finished) - schemaStarted) * 10) / 10,
+      database_ms: Math.round((queryStarted === undefined ? 0 : finished - queryStarted) * 10) / 10,
+      total_ms: Math.round((finished - started) * 10) / 10,
+    })); } catch {}
   }
 
   try {
