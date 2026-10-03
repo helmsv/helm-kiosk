@@ -1,6 +1,7 @@
 const { requireStaff } = require('../lib/staff-auth');
 // api/rentals-outstanding.js
 const { getPool } = require("./_db");
+const { ensureSchema } = require("./_ensureSchema");
 const { performance } = require('node:perf_hooks');
 
 function parseISODateOnly(s) {
@@ -13,10 +14,10 @@ module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'private, no-store');
   try { await requireStaff(req); } catch (error) { return res.status(error.status || 503).json({ error:error.message }); }
   const authorized = performance.now();
-  let queryStarted;
+  let schemaStarted, schemaFinished, queryStarted;
   function timing() {
     const finished = performance.now();
-    res.setHeader('Server-Timing', `staff;dur=${(authorized - started).toFixed(1)}, database;dur=${(queryStarted === undefined ? 0 : finished - queryStarted).toFixed(1)}`);
+    res.setHeader('Server-Timing', `staff;dur=${(authorized - started).toFixed(1)}, schema;dur=${(schemaStarted === undefined ? 0 : (schemaFinished ?? finished) - schemaStarted).toFixed(1)}, database;dur=${(queryStarted === undefined ? 0 : finished - queryStarted).toFixed(1)}`);
   }
 
   try {
@@ -26,6 +27,10 @@ module.exports = async (req, res) => {
       res.end(JSON.stringify({ error: "Method not allowed" }));
       return;
     }
+
+    schemaStarted = performance.now();
+    await ensureSchema();
+    schemaFinished = performance.now();
 
     const name = (req.query.name || "").toString().trim();
     const startDate = parseISODateOnly((req.query.startDate || "").toString().trim());
@@ -83,9 +88,7 @@ module.exports = async (req, res) => {
       LIMIT 500;
     `;
 
-    // Schema setup belongs to the existing ingestion/write paths. A fresh
-    // private SELECT must not run DDL or acquire a second connection first.
-    // Missing schema fails closed; it never becomes a successful empty list.
+    // Always read current rows after authorization and schema readiness.
     queryStarted = performance.now();
     const { rows } = await pool.query(sql, params);
     timing();

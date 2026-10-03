@@ -48,11 +48,14 @@ uses fixed fictional adult data and must never be signed.
 ### Returns read performance
 
 `GET /api/rentals-outstanding` verifies the current staff session and performs a
-fresh parameterized SELECT with `private, no-store`. It does not create or alter
-schema; the existing ingestion/write setup owns initialization. A missing schema
-or failed database read returns an error, never an empty successful result.
-Authorized responses include `Server-Timing` durations for `staff` verification
-and `database` read/connection time. These fixed labels contain no identities,
-filter values, tokens, or customer content. No timing header is exposed when
-staff verification fails. Use these phases to diagnose slow loads without caching
-private results or weakening authorization.
+fresh parameterized SELECT with `private, no-store`. Schema readiness uses one
+catalog query on cold functions; complete databases skip DDL. Fresh and older
+databases retain the existing additive initialization on a single transaction
+connection. Concurrent requests in the same function share initialization; only
+successful schema readiness is cached, never rental rows or staff permission.
+Initialization/database failures return an error, never an empty successful list.
+
+Authorized responses include `Server-Timing` durations for `staff`, `schema`, and
+`database` read/connection time. Fixed labels contain no identities, filters,
+tokens, or customer content. Failed staff verification exposes no timing header.
+Use these phases to measure load latency without weakening authorization.

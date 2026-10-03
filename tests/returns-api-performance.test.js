@@ -4,12 +4,13 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-function harness({ authorize = async () => {}, query = async () => ({ rows: [] }) } = {}) {
+function harness({ authorize = async () => {}, query = async () => ({ rows: [] }), ensureSchema = async () => {} } = {}) {
   const module = { exports: {} };
   let ticks = 0;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../api/rentals-outstanding.js'), 'utf8'), {
     module, require(name) {
       if (name === '../lib/staff-auth') return { requireStaff: authorize };
+      if (name === './_ensureSchema') return { ensureSchema };
       if (name === './_db') return { getPool: () => ({ query }) };
       if (name === 'node:perf_hooks') return { performance: { now: () => ++ticks } };
       throw Error('Unexpected dependency: ' + name);
@@ -22,13 +23,13 @@ function response() {
 }
 const input = { method:'GET', query:{ status:'OUT' } };
 
-test('every Returns read authorizes and reads current rows without DDL or caching', async () => {
+test('every Returns read authorizes and reads current rows without result caching', async () => {
   let n=0; const calls=[];
   const handler=harness({ authorize: async () => calls.push('auth'), query: async(sql,params) => {
     calls.push('read'); assert.match(sql,/^\s*SELECT/); assert.doesNotMatch(sql,/CREATE|ALTER|INSERT|UPDATE|DELETE/);
     assert.equal(params[0],'OUT'); return { rows:[{ id:++n }] };
   }});
-  for (let i=1;i<=2;i++) { const res=response();await handler(input,res);assert.equal(res.statusCode,200);assert.equal(res.body.rentals[0].id,i);assert.equal(res.headers['Cache-Control'],'private, no-store');assert.match(res.headers['Server-Timing'],/^staff;dur=\d+\.\d, database;dur=\d+\.\d$/); }
+  for (let i=1;i<=2;i++) { const res=response();await handler(input,res);assert.equal(res.statusCode,200);assert.equal(res.body.rentals[0].id,i);assert.equal(res.headers['Cache-Control'],'private, no-store');assert.match(res.headers['Server-Timing'],/^staff;dur=\d+\.\d, schema;dur=\d+\.\d, database;dur=\d+\.\d$/); }
   assert.deepEqual(calls,['auth','read','auth','read']);
 });
 test('denied and unavailable staff sessions never touch database or disclose timing', async () => {
