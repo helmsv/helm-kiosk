@@ -70,6 +70,10 @@
         <button id="nextPage" type="button" class="btn-outline" disabled>Next page</button>
         <span id="intakeLoadStatus" role="status" class="tiny"></span>
       </div>
+      <div style="margin-top:12px">
+        <button id="openBlankLiability" type="button" class="btn-outline">Open blank liability waiver</button>
+        <p class="text-sm text-gray-600">Manual entry: no customer details, intake link, or DIN settings are transferred. Complete and verify every field. The pending intake may remain listed.</p>
+      </div>
       <details style="margin-top:12px;font-size:12px"><summary>Waiver setup checks</summary>
         <p>Staff-only setup check. The test preview uses fictional adult data and must not be signed.</p>
         <button id="checkWaiverFields" type="button" class="btn-outline">Check template fields</button>
@@ -496,6 +500,28 @@
       return await r.json();
     }
     const openingDrafts=new Set();
+    const blankLiabilityWarning='This is a blank final liability waiver. No customer details, intake link, or DIN settings are transferred. Complete and verify every field before signing. The pending intake may remain listed.';
+    async function openBlankLiability(tab, button){
+      if(button)button.disabled=true;
+      if(!tab.closed)tab.document.body.textContent=blankLiabilityWarning+' Opening verified template…';
+      try{
+        const response=await StaffSession.fetch('/api/liability-template',{method:'POST'});
+        const data=await response.json();
+        if(!response.ok)throw new Error(data.error||'Could not open the blank liability waiver.');
+        if(!StaffSession.isReady())throw new Error('Your staff session ended. Sign in again before opening a waiver.');
+        if(data.blank!==true||data.url!=='https://www.smartwaiver.com/w/a2njtmnzxs7icea9mdxff6/kiosk/')throw new Error('Unexpected blank waiver destination.');
+        showToast(blankLiabilityWarning);
+        if(!tab.closed)tab.location.replace(data.url);
+      }catch(error){if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
+      finally{if(button)button.disabled=false;}
+    }
+    document.getElementById('openBlankLiability').addEventListener('click',function(){
+      if(this.disabled)return;
+      const tab=window.open('about:blank','_blank');
+      if(!tab){showToast('Allow popups to open the blank final waiver.');return;}
+      tab.opener=null;tab.document.title='Blank final liability waiver';
+      return openBlankLiability(tab,this);
+    });
     async function openLiabilityDraft(selection, button, technicianReview){
       const key=rowKey(selection.waiverId,selection.participantIndex);
       if(!selection.waiverId||openingDrafts.has(key))return;
@@ -507,7 +533,11 @@
       try{
         const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'liability',...selection,...(technicianReview?{technicianReview}:{})})});
         const data=await response.json();
-        if(!response.ok||!data.url)throw new Error(data.error||'Could not prepare the final waiver.');
+        if(!response.ok||!data.url){
+          const error=new Error(data.error||'Could not prepare the final waiver.');
+          error.blankAllowed=response.status===502&&/\[prefill-create; HTTP 400\]$/.test(data.error||'');
+          throw error;
+        }
         if(!StaffSession.isReady())throw new Error('Your staff session ended. Reopen the final waiver after signing in.');
         const url=new URL(data.url);
         if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected waiver destination.');
@@ -515,6 +545,12 @@
         if(!tab.closed)tab.location.replace(url.toString());
       }catch(error){
         if(!tab.closed)tab.document.body.textContent=error.message||'Unable to prepare the waiver. Return to Rentals and try again.';
+        if(error.blankAllowed&&!tab.closed&&StaffSession.isReady()){
+          const warning=tab.document.createElement('p');warning.textContent=blankLiabilityWarning;
+          const fallback=tab.document.createElement('button');fallback.type='button';fallback.textContent='Open blank liability waiver';
+          fallback.addEventListener('click',()=>{if(!fallback.disabled)return openBlankLiability(tab,fallback);});
+          tab.document.body.append(warning,fallback);
+        }
         showToast(error.message||'Unable to prepare the waiver.');
       }finally{openingDrafts.delete(key);if(button)button.disabled=false;}
     }
