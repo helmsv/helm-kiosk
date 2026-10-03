@@ -198,7 +198,6 @@
   <script src="/rental-dialog.js"></script>
   <script src="/staff-session.js"></script>
 <script>
-    let LIABILITY_WAIVER_ID = "";
     const REFRESH_MS = 15000;
     const tb = document.getElementById("tbody");
     const sseEl = document.getElementById("sseStatus");
@@ -782,12 +781,14 @@
       }catch(error){output.textContent=error.message;if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
     });
 
-    window.addEventListener('staff-session-ended',()=>{
+    window.addEventListener('staff-session-ended',event=>{
       refreshGeneration++; dinRequestId++; current=null; activeIntakeDetails=null; activeIntakeMeta=null;
       store.clear(); hiddenSet.clear(); tb.replaceChildren();
       dinDialog.hide({ restoreFocus: false });
       document.getElementById('waiverSetupResult').textContent='';
-      document.getElementById('intakeLoadStatus').textContent='Staff sign-in is required.';
+      document.getElementById('intakeLoadStatus').textContent=event.reason==='unavailable'
+        ? 'Staff verification is temporarily unavailable. Reconnecting…'
+        : event.reason==='closed' ? 'Reconnecting to SnowOS staff access…' : 'Staff sign-in is required.';
     });
     window.addEventListener('staff-session-ready',refreshPoll);
 
@@ -798,14 +799,8 @@
       showHidden = false;
       reflectHiddenToggle();
       setDefaultDatesToday();
-      try {
-        const r = await StaffSession.fetch("/api/config", { headers: { 'Cache-Control':'no-cache' }});
-        const cfg = await r.json();
-        LIABILITY_WAIVER_ID = cfg.liability_waiver_id || "";
-      } catch (e) {
-        console.error("config fetch failed:", e);
-        showToast("Failed to load config");
-      }
+      // Participant reads verify staff access themselves. The old configuration
+      // request only assigned an unused template ID and delayed this first load.
       await refreshPoll();
       setInterval(refreshPoll, REFRESH_MS);
     })();
