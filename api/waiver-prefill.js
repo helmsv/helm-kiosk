@@ -18,13 +18,15 @@ function syntheticTechnicalFields(payload, definition) {
   for (const labels of groups) {
     const matches = fields.filter(field => labels.includes(field.label));
     if (matches.length !== 1) continue;
-    const { label, guid, scope } = matches[0];
+    const { label, guid, scope, fieldType, type } = matches[0];
     if (typeof guid !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(guid)) continue;
     const values = scope === 'participant' ? payload.participants?.[0]?.customFields : payload.customWaiverFields;
     if (!values || !Object.prototype.hasOwnProperty.call(values, guid)) continue;
     const value = values[guid];
     if (typeof value !== 'string' || value.length > 128) continue;
-    result.push({ label, guid, scope, value });
+    // Only reviewed schema vocabulary, never arbitrary metadata text.
+    if (!['textbox', 'numerictextbox', 'optionlist'].includes(fieldType) || !['string', 'number', 'enum'].includes(type)) continue;
+    result.push({ label, guid, scope, value, fieldType, type });
   }
   return result;
 }
@@ -68,6 +70,7 @@ module.exports = async function handler(req, res) {
     // The welcome stage only forwards values entered in the current public form.
     const staffStage = ['liability','template-check','synthetic-preview'].includes(input.stage);
     if (staffStage) await requireStaff(req);
+    if (input.stage === 'synthetic-preview' && input.syntheticKiosk !== undefined && typeof input.syntheticKiosk !== 'boolean') return res.status(400).json({ error: 'Choose a boolean kiosk mode for the fictional test.' });
     const intakeId = process.env.INTAKE_WAIVER_ID || process.env.INTAKE_TEMPLATE_ID;
     const liabilityId = process.env.LIABILITY_WAIVER_ID || process.env.LIABILITY_TEMPLATE_ID || process.env.SW_TEMPLATE_LIABILITY;
     if (!intakeId || (staffStage && !liabilityId)) return res.status(503).json({ error: 'Smartwaiver templates are not configured.' });
@@ -90,6 +93,9 @@ module.exports = async function handler(req, res) {
       const participant=normalizeIntake(waiver).participants[0];
       const review={reviewed:true,waiverId:waiver.waiverId,participantIndex:0,participant:{first_name:participant.first_name,last_name:participant.last_name},source:{weight_lb:participant.weight_lb,height_in:participant.height_in,age:participant.age,skier_type:participant.skier_type},calculated:{skierCode:'M',din:'7',bootSoleLengthMm:315}};
       draft=await during('prefill-build', () => buildLiabilityPrefill(waiver,intake,liability,0,review));templateId=liabilityId;
+      // Support comparison only: customer requests cannot override kiosk mode.
+      // Every other value still comes from the same fixed fictional fixture.
+      draft.payload.kiosk = input.syntheticKiosk ?? true;
       technicalFields = syntheticTechnicalFields(draft.payload, liability);
     } else if (input.stage === 'liability') {
       if (typeof input.waiverId !== 'string' || !/^[a-zA-Z0-9_-]{6,128}$/.test(input.waiverId)) return res.status(400).json({ error: 'A valid intake ID is required.' });
@@ -102,12 +108,16 @@ module.exports = async function handler(req, res) {
       templateId = liabilityId;
     } else return res.status(400).json({ error: 'Choose intake or liability.' });
     if (staffStage) await requireStaff(req);
+    const requestStartedAtUtc = new Date().toISOString();
     const result = await during('prefill-create', () => sw.request(`/templates/${encodeURIComponent(templateId)}/prefill`, { method: 'POST', body: draft.payload }));
+    const responseReceivedAtUtc = new Date().toISOString();
     const url = await during('prefill-response', () => {
       if (typeof result.prefill?.uuid !== 'string' || !result.prefill.uuid) throw new Error('Missing Smartwaiver prefill ID.');
       return safePrefillUrl(result.prefill.url, draft.tag, result.prefill.uuid);
     });
-    return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, reviewRequired: true, ...(technicalFields ? { technicalFields } : {}) });
+    return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, reviewRequired: true, ...(technicalFields ? { technicalFields,
+      testEvidence: { kiosk: draft.payload.kiosk, requestStartedAtUtc, responseReceivedAtUtc, expiresInSeconds: draft.payload.expiration },
+    } : {}) });
   } catch (error) {
     const status = [401,403,503].includes(error.status) ? error.status : error instanceof SyntaxError ? 400 : error.statusCode === 400 ? 400 : error.status === 429 || error.statusCode === 429 ? 429 : 502;
     // Validation messages are ours. Upstream bodies can contain customer details.
