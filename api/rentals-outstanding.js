@@ -1,7 +1,7 @@
 const { requireStaff } = require('../lib/staff-auth');
 // api/rentals-outstanding.js
 const { getPool } = require("./_db");
-const { ensureSchema } = require("./_ensureSchema");
+const { performance } = require('node:perf_hooks');
 
 function parseISODateOnly(s) {
   if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
@@ -9,12 +9,17 @@ function parseISODateOnly(s) {
 }
 
 module.exports = async (req, res) => {
+  const started = performance.now();
   res.setHeader('Cache-Control', 'private, no-store');
   try { await requireStaff(req); } catch (error) { return res.status(error.status || 503).json({ error:error.message }); }
+  const authorized = performance.now();
+  let queryStarted;
+  function timing() {
+    const finished = performance.now();
+    res.setHeader('Server-Timing', `staff;dur=${(authorized - started).toFixed(1)}, database;dur=${(queryStarted === undefined ? 0 : finished - queryStarted).toFixed(1)}`);
+  }
 
   try {
-    await ensureSchema();
-
     if (req.method !== "GET") {
       res.statusCode = 405;
       res.setHeader("Content-Type", "application/json");
@@ -78,12 +83,18 @@ module.exports = async (req, res) => {
       LIMIT 500;
     `;
 
+    // Schema setup belongs to the existing ingestion/write paths. A fresh
+    // private SELECT must not run DDL or acquire a second connection first.
+    // Missing schema fails closed; it never becomes a successful empty list.
+    queryStarted = performance.now();
     const { rows } = await pool.query(sql, params);
+    timing();
 
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ rentals: rows }));
   } catch (err) {
+    timing();
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ error: err.message || "Server error" }));
