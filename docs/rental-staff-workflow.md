@@ -44,3 +44,18 @@ Run `npm test`. An optional fully mocked Playwright suite is at
 `tests/rental-mobile.browser.cjs`; it makes no production calls. Staff-only setup
 checks read only configured template metadata. The unsigned synthetic preview
 uses fixed fictional adult data and must never be signed.
+
+### Returns read performance
+
+`GET /api/rentals-outstanding` verifies the current staff session and performs a
+fresh parameterized SELECT with `private, no-store`. Schema readiness uses one
+catalog query on cold functions; complete databases skip DDL. Fresh and older
+databases retain the existing additive initialization on a single transaction
+connection. Concurrent requests in the same function share initialization; only
+successful schema readiness is cached, never rental rows or staff permission.
+Initialization/database failures return an error, never an empty successful list.
+
+Authorized responses include `Server-Timing` durations for `staff`, `schema`, and
+`database` read/connection time. Fixed labels contain no identities, filters,
+tokens, or customer content. Failed staff verification exposes no timing header.
+Use these phases to measure load latency without weakening authorization.
