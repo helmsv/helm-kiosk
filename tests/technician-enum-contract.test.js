@@ -7,7 +7,7 @@ const { normalizeIntake } = require('../lib/intake-normalize');
 
 // Actual unsigned-template option contract, synthetic GUIDs and participant.
 // No network calls, signed customer data, signature or consent submission.
-const templateId = 'a2njtmnzxs7icea9mdxff6', publishedVersion = 1051919;
+const templateId = 'a2njtmnzxs7icea9mdxff6', publishedVersion = 1616022;
 const definition = (guid, label) => ({ guid, label, fieldType: 'optionlist', type: 'enum' });
 function template() {
   return { templateId, publishedVersion, customFields: [
@@ -40,14 +40,48 @@ function mutateContract(fn, run) {
 test('captured three-dropdown contract serializes exact options and leaves raw review values unchanged', () => {
   const w = waiver(), r = review(w), before = JSON.stringify({ w, r });
   const result = buildTechnicianPrefill(w, template(), 0, r);
-  assert.deepEqual({ ...result.waiverFields }, { synthetic_dynamic_code: 'L', synthetic_dynamic_din: '7,00', synthetic_dynamic_bsl: '311-330' });
+  assert.deepEqual({ ...result.waiverFields }, { synthetic_dynamic_code: 'L', synthetic_dynamic_din: '7,00', synthetic_dynamic_bsl: '311–330' });
   assert.equal(JSON.stringify({ w, r }), before);
   assert.equal(Object.keys(result.participantFields).length, 0);
   assert.match(result.copiedFields[1], /Initial Indicator Value/);
   const payload = buildLiabilityPrefill(w, {}, template(), 0, r).payload;
   assert.equal(payload.lockdownPrefill, false);
   assert.equal(payload.customWaiverFields.synthetic_dynamic_din, '7,00');
-  assert.equal(payload.customWaiverFields.synthetic_dynamic_bsl, '311-330');
+  assert.equal(payload.customWaiverFields.synthetic_dynamic_bsl, '311–330');
+});
+
+test('original participant GUIDs receive all seven explicit values independently, with final settings absent unless supplied', () => {
+  const { dropdowns, finals } = require('./fixtures/rental-technical-fields');
+  const target = { templateId, publishedVersion, customParticipantFields: structuredClone([...dropdowns, ...finals]) };
+  const w = waiver(), r = review(w, { skierCode: 'M' });
+  r.finalSettings = { leftToe: '6.25', leftHeel: '6.50', rightToe: '5.75', rightHeel: '6.00' };
+  const before = JSON.stringify({ w, r, target });
+  const result = buildLiabilityPrefill(w, {}, target, 0, r);
+  assert.deepEqual(result.payload.participants[0].customFields, {
+    '5ktkNvPGcPnv4o2ea9jBuv': 'M',
+    k26zGhNRXqxW4AamXpHUEx: '7,00',
+    cVR22k9ALMuAs6EtVsau14: '311–330',
+    byaj6QE3jt8u4FBcs5NQUU: '6.25',
+    hQBJX42Bf4rTgA2whsjen2: '6.50',
+    '4iaqE8mr6v1KmHuRtJf2Uu': '5.75',
+    '5vcq7mUTY11uT9Bf6wzmeh': '6.00',
+  });
+  assert.equal(result.payload.customWaiverFields, undefined);
+  assert.equal(result.payload.lockdownPrefill, false);
+  assert.equal(result.copiedFields.filter(value => value.includes('(technician reviewed)')).length, 7);
+  assert.equal(JSON.stringify({ w, r, target }), before, 'Source, explicit review and metadata are immutable');
+  const withoutFinals = { ...r }; delete withoutFinals.finalSettings;
+  const onlyCalculated = buildLiabilityPrefill(w, {}, target, 0, withoutFinals).payload.participants[0].customFields;
+  assert.equal(Object.keys(onlyCalculated).length, 3);
+  for (const field of finals) assert.equal(Object.hasOwn(onlyCalculated, field.guid), false);
+  for (const field of finals) {
+    const missing = { ...target, customParticipantFields: target.customParticipantFields.filter(item => item.guid !== field.guid) };
+    rejects(() => buildLiabilityPrefill(w, {}, missing, 0, r), 'TECHNICIAN_FIELD_MISSING');
+  }
+  for (const key of Object.keys(r.finalSettings)) {
+    const incomplete = { ...r, finalSettings: { ...r.finalSettings } }; delete incomplete.finalSettings[key];
+    rejects(() => buildLiabilityPrefill(w, {}, target, 0, incomplete), 'TECHNICIAN_FINAL_SETTINGS_INCOMPLETE');
+  }
 });
 
 test('all 46 captured DIN options and all 16 skier codes match exactly without rounding', () => {
@@ -64,16 +98,15 @@ test('all 46 captured DIN options and all 16 skier codes match exactly without r
   for (const din of [0.5, 0.76, 1.1, 7.01, 12.25, '7.000000000000001']) rejects(() => build({ din }), 'TECHNICIAN_ENUM_VALUE_UNSUPPORTED');
 });
 
-test('all captured BSL range boundaries are inclusive and uncovered lengths fail closed', () => {
-  const boundaries = [[231, '231-250'], [250, '231-250'], [251, '251-270'], [270, '251-270'], [271, '271-290'], [290, '271-290'], [291, '291-310'], [310, '291-310'], [311, '311-330'], [315, '311-330'], [330, '311-330'], [331, '331-350'], [350, '331-350'], [351, '>=351'], [420, '>=351']];
+test('all eight verified BSL columns have exact inclusive boundaries and out-of-range measurements fail closed', () => {
+  const boundaries = [[200, '≤230'], [230, '≤230'], [231, '231–250'], [250, '231–250'], [251, '251–270'], [270, '251–270'], [271, '271–290'], [290, '271–290'], [291, '291–310'], [310, '291–310'], [311, '311–330'], [315, '311–330'], [330, '311–330'], [331, '331–350'], [350, '331–350'], [351, '≥351'], [420, '≥351']];
   for (const [length, option] of boundaries) assert.equal(build({ bootSoleLengthMm: length }).waiverFields.synthetic_dynamic_bsl, option, `${length} mm`);
-  for (const length of [200, 230]) rejects(() => build({ bootSoleLengthMm: length }), 'TECHNICIAN_ENUM_VALUE_UNSUPPORTED');
   for (const length of [0, 199, 421, 315.5, '', null]) rejects(() => build({ bootSoleLengthMm: length }), 'TECHNICIAN_VALUE_INVALID');
 });
 
 test('an explicitly verified full BSL contract supports its lowest column without inventing a live template binding', () => {
-  // This is a candidate fixture only. The published contract above remains
-  // unchanged until the corrected Smartwaiver template is actually verified.
+  // Test both supported spellings without changing the live contract's exact
+  // Unicode option text or trusting any different publication version.
   for (const [low, high, separator] of [['<=230', '>=351', '-'], ['≤230', '≥351', '–']]) {
     const options = [low, ...['231-250', '251-270', '271-290', '291-310', '311-330', '331-350'].map(v => v.replace('-', separator)), high];
     mutateContract(list => { list[0].fields.find(field => field.label === 'Boot Sole Length (mm)').values = options; }, () => {
@@ -97,7 +130,7 @@ test('damaged BSL operators are rejected and overlapping lowest columns remain a
 });
 
 test('unverified template IDs or publication versions cannot reuse the captured contract', () => {
-  for (const changed of [{ templateId: 'another_template' }, { templateId: '' }, { publishedVersion: 1051920 }, { publishedVersion: '1051919' }, { publishedVersion: undefined }]) rejects(() => build({}, { ...template(), ...changed }), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED');
+  for (const changed of [{ templateId: 'another_template' }, { templateId: '' }, { publishedVersion: 1051919 }, { publishedVersion: 1616021 }, { publishedVersion: 1616023 }, { publishedVersion: '1616022' }, { publishedVersion: undefined }]) rejects(() => build({}, { ...template(), ...changed }), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED');
   mutateContract(list => list.splice(0), () => rejects(() => build(), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED'));
   mutateContract(list => list.push(structuredClone(list[0])), () => rejects(() => build(), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED'));
 });

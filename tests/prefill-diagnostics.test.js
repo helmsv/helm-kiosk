@@ -246,6 +246,7 @@ test('both draft stages refresh destination metadata and reject publication chan
           { guid: 'synthetic_code', label: 'Skier Code', fieldType: 'textbox', type: 'string' },
           { guid: 'synthetic_din', label: 'DIN', fieldType: 'optionlist', type: 'enum' },
           { guid: 'synthetic_bsl', label: 'Boot Sole Length (mm)', fieldType: 'numerictextbox', type: 'number' },
+          ...require('./fixtures/rental-technical-fields').finals,
         ] } });
       }
       assert.ok(url.includes(INTAKE));

@@ -6,7 +6,7 @@ const html = fs.readFileSync(require('node:path').join(__dirname, '../tech.html'
 const source = html.slice(html.indexOf('    const openingDrafts='), html.indexOf('    // ----- participant extraction helpers'));
 function harness(fetcher, popup = true) {
   const nodes = new Map(), requests = [], tabs = [], notices = [];
-  const node = () => ({ disabled:false, checked:false, style:{}, textContent:'', children:[],
+  const node = () => ({ value:'', disabled:false, checked:false, style:{}, textContent:'', children:[],
     replaceChildren(...children){this.children=children; this.textContent=children.filter(c=>typeof c==='string').join('');},
     append(...children){this.children.push(...children);}, addEventListener(type, fn){this[type]=fn;},
     setAttribute(){}, removeAttribute(){} });

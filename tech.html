@@ -157,42 +157,41 @@
             </div>
             <div class="mt-1 text-xs text-gray-600" id="out_summary"></div>
 
-            <div class="rental-bindings mt-4 grid grid-cols-2 gap-3">
-              <div class="border rounded-lg p-3 bg-gray-50">
-                <div class="text-sm font-semibold mb-2">Left Binding</div>
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs text-gray-600">Toe</span>
-                  <span id="out_left_toe" class="pill w-20 text-center">—</span>
+            <fieldset class="mt-4">
+              <legend class="text-sm font-semibold">Final indicator settings (optional)</legend>
+              <p id="finalSettingsHelp" class="tiny">Enter all four settings only after the technician has verified them. Leave all four blank to complete them on the final waiver. These values are never filled from the calculated DIN.</p>
+              <div class="rental-bindings mt-2 grid grid-cols-2 gap-3">
+                <div>
+                  <label for="inp_final_left_toe" class="block text-xs mb-1">Left toe</label>
+                  <input id="inp_final_left_toe" type="text" inputmode="decimal" autocomplete="off" class="input" aria-describedby="finalSettingsHelp finalSettingsStatus">
                 </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-gray-600">Heel</span>
-                  <span id="out_left_heel" class="pill w-20 text-center">—</span>
+                <div>
+                  <label for="inp_final_left_heel" class="block text-xs mb-1">Left heel</label>
+                  <input id="inp_final_left_heel" type="text" inputmode="decimal" autocomplete="off" class="input" aria-describedby="finalSettingsHelp finalSettingsStatus">
                 </div>
-              </div>
-              <div class="border rounded-lg p-3 bg-gray-50">
-                <div class="text-sm font-semibold mb-2">Right Binding</div>
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs text-gray-600">Toe</span>
-                  <span id="out_right_toe" class="pill w-20 text-center">—</span>
+                <div>
+                  <label for="inp_final_right_toe" class="block text-xs mb-1">Right toe</label>
+                  <input id="inp_final_right_toe" type="text" inputmode="decimal" autocomplete="off" class="input" aria-describedby="finalSettingsHelp finalSettingsStatus">
                 </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-gray-600">Heel</span>
-                  <span id="out_right_heel" class="pill w-20 text-center">—</span>
+                <div>
+                  <label for="inp_final_right_heel" class="block text-xs mb-1">Right heel</label>
+                  <input id="inp_final_right_heel" type="text" inputmode="decimal" autocomplete="off" class="input" aria-describedby="finalSettingsHelp finalSettingsStatus">
                 </div>
               </div>
-            </div>
+              <p id="finalSettingsStatus" role="status" aria-live="polite" class="tiny"></p>
+            </fieldset>
           </div>
 
           <p id="skierTypeReviewNotice" class="tiny" hidden></p>
           <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px;font-size:13px">
             <input id="reviewTechnician" type="checkbox" style="width:auto;min-height:0;margin-top:3px">
-            <span>I reviewed this participant, the selected skier type, measured boot sole length, skier code and calculated DIN against current shop procedures.</span>
+            <span>I reviewed this participant, the selected skier type, measured boot sole length, skier code, calculated DIN and any final indicator settings I entered against current shop procedures.</span>
           </label>
-          <p class="tiny">The reviewed code, DIN and boot sole length will be copied. Enter the final indicator settings separately on the final waiver.</p>
+          <p class="tiny">The reviewed code, calculated DIN, boot sole length and any entered final settings will be copied. Blank final settings remain for the technician to complete on the final waiver.</p>
           <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
           <p id="liabilityReviewStatus" role="status" aria-live="polite" style="overflow-wrap:anywhere">Enter the measured boot sole length, then review the calculation to open the prefilled waiver.</p>
           <div class="rental-dialog-actions mt-4 flex items-center gap-3">
-            <button id="btnCopy" class="btn-outline">Copy All <span class="kbd">⌘C</span></button>
+            <button id="btnCopy" class="btn-outline" disabled>Copy reviewed values</button>
             <button id="btnOpenLiab" class="btn" disabled>Open Liability</button>
           </div>
 
@@ -513,9 +512,22 @@
         }
       }
     }
+    const FINAL_SETTING_INPUTS={leftToe:'inp_final_left_toe',leftHeel:'inp_final_left_heel',rightToe:'inp_final_right_toe',rightHeel:'inp_final_right_heel'};
+    function readFinalSettings(){
+      const values=Object.fromEntries(Object.entries(FINAL_SETTING_INPUTS).map(([key,id])=>[key,document.getElementById(id).value]));
+      const entered=Object.values(values).filter(value=>value.trim()!=='');
+      if(!entered.length)return {valid:true,values:null,message:'Final settings are blank and will not be copied.'};
+      if(entered.length!==4)return {valid:false,values:null,message:'Enter all four final settings, or clear all four before continuing.'};
+      // Serialization check only: no recommendation, rounding or calculated defaults.
+      if(Object.values(values).some(value=>!/^[-]?\d+(?:\.\d+)?$/.test(value)||!Number.isFinite(Number(value))))return {valid:false,values:null,message:'Use a complete numeric value with a decimal point if needed for each final setting.'};
+      return {valid:true,values,message:'All four entered settings will be copied exactly after review.'};
+    }
     function reflectLiabilityReviewButton(){
-      document.getElementById('btnOpenLiab').disabled=!(current?.calculation&&document.getElementById('reviewTechnician').checked)
-        || openingDrafts.has(rowKey(current?.waiver_id,current?.participant_index));
+      const finals=readFinalSettings();
+      document.getElementById('finalSettingsStatus').textContent=finals.message;
+      const reviewed=Boolean(current?.calculation&&document.getElementById('reviewTechnician').checked&&finals.valid);
+      document.getElementById('btnOpenLiab').disabled=!reviewed||openingDrafts.has(rowKey(current?.waiver_id,current?.participant_index));
+      document.getElementById('btnCopy').disabled=!reviewed;
     }
     const blankLiabilityWarning='This is a blank final liability waiver. No customer details, intake link, or DIN settings are transferred. Complete and verify every field before signing. The pending intake may remain listed.';
     async function openBlankLiability(tab, button){
@@ -726,10 +738,6 @@
     const dinClose=document.getElementById("dinClose");
     const outDin=()=>document.getElementById("out_din");
     const outSum=()=>document.getElementById("out_summary");
-    const outLT =()=>document.getElementById("out_left_toe");
-    const outLH =()=>document.getElementById("out_left_heel");
-    const outRT =()=>document.getElementById("out_right_toe");
-    const outRH =()=>document.getElementById("out_right_heel");
     const inpBSL=()=>document.getElementById("inp_bsl");
     const inpType=()=>document.getElementById("inp_type");
     const inpAgeAdj=()=>document.getElementById("inp_ageAdj");
@@ -752,7 +760,7 @@
 
     function reflectBaseDin(val){
       const s=(val==null||!Number.isFinite(val))?"—":Number(val).toFixed(2);
-      outDin().textContent=s; outLT().textContent=s; outLH().textContent=s; outRT().textContent=s; outRH().textContent=s;
+      outDin().textContent=s;
     }
     function computeAndRender(){
       if(!current) return;
@@ -775,7 +783,7 @@
       document.getElementById('btnOpenLiab').disabled=true;
       reflectBaseDin(res.din);
       outSum().textContent = (res.din==null) ? res.explain : `Skier code ${res.code}, ${res.explain}`;
-      document.getElementById("btnCopy").disabled = res.din == null;
+      reflectLiabilityReviewButton();
     }
     function openDINModal(p, meta, trigger){
       document.getElementById('liabilityReviewStatus').textContent='Enter the measured boot sole length, then review the calculation to open the prefilled waiver.';
@@ -799,6 +807,7 @@
       document.getElementById("i_height").textContent = hcm ? `${hcm} cm` : "—";
       document.getElementById("i_skier").textContent  = displaySkier(current.skier_type);
 
+      for(const id of Object.values(FINAL_SETTING_INPUTS))document.getElementById(id).value="";
       inpBSL().value = "";
       inpType().value = current.skier_type || "";
       inpAgeAdj().value = "auto";
@@ -816,11 +825,18 @@
       inpAgeAdj().addEventListener(evt, computeAndRender);
       inpBasis().addEventListener(evt, computeAndRender);
     });
+    for(const id of Object.values(FINAL_SETTING_INPUTS)){
+      for(const event of ['input','change'])document.getElementById(id).addEventListener(event,()=>{
+        document.getElementById('reviewTechnician').checked=false;
+        reflectLiabilityReviewButton();
+      });
+    }
     document.getElementById("btnCopy").addEventListener("click", async ()=>{
-      const s = outDin().textContent;
-      if (s === "—" || !current) return;
-      const txt = `DIN ${s} — L Toe ${outLT().textContent}, L Heel ${outLH().textContent}, R Toe ${outRT().textContent}, R Heel ${outRH().textContent}. ${outSum().textContent}`;
-      try { await navigator.clipboard.writeText(txt); showToast("DIN set copied"); } catch { showToast("Copy failed"); }
+      const finals=readFinalSettings();
+      if(!current?.calculation||!finals.valid||!document.getElementById('reviewTechnician').checked)return;
+      const finalText=finals.values?`Final settings — L Toe ${finals.values.leftToe}, L Heel ${finals.values.leftHeel}, R Toe ${finals.values.rightToe}, R Heel ${finals.values.rightHeel}.`:'Final indicator settings not entered.';
+      const txt = `Calculated DIN ${outDin().textContent}. ${outSum().textContent} ${finalText}`;
+      try { await navigator.clipboard.writeText(txt); showToast("Reviewed values copied"); } catch { showToast("Copy failed"); }
     });
     document.getElementById("dinParticipant").addEventListener("change", (event)=>{
       if (!activeIntakeDetails || !activeIntakeMeta) return;
@@ -833,11 +849,13 @@
       reflectLiabilityReviewButton();
     });
     document.getElementById('btnOpenLiab').addEventListener('click',async event=>{
-      if(!current?.calculation||!document.getElementById('reviewTechnician').checked){showToast('Review the current calculator values before copying them.');return;}
+      const finals=readFinalSettings();
+      if(!finals.valid){showToast(finals.message);return;}
+      if(!current?.calculation||!document.getElementById('reviewTechnician').checked){showToast('Review the current calculation and entered final settings before copying them.');return;}
       const technicianReview={reviewed:true,waiverId:current.waiver_id,participantIndex:current.participant_index,
         participant:{first_name:current.first_name,last_name:current.last_name},
         source:{weight_lb:current.weight_lb,height_in:current.height_in,age:current.age,skier_type:current.skier_type},
-        calculated:{...current.calculation}};
+        calculated:{...current.calculation},...(finals.values?{finalSettings:{...finals.values}}:{})};
       await openLiabilityDraft({waiverId:current.waiver_id,participantIndex:current.participant_index},event.currentTarget,technicianReview);
     });
 

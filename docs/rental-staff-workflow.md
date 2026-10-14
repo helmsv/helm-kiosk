@@ -25,7 +25,10 @@ The intake question “Skier Type: (Check One)” accepts one explicit selection
 Missing/conflicting data never defaults to Type II. The existing chart arithmetic
 is unchanged. Technicians must review the current participant, measured boot,
 skier code and calculated DIN before copying those three fields. Final binding
-indicator settings are not inferred or filled from calculated DIN.
+indicator settings are not inferred or filled from calculated DIN. Staff may
+enter all four final toe/heel settings explicitly or leave all four blank. A
+partial group blocks opening. Any edit resets review; reviewed numeric strings
+(including trailing zeros) are preserved in their separate destination fields.
 
 Both row actions, **Calculate DIN** and **Open Liability**, enter the same
 participant review. The latter previously bypassed review and omitted technician
@@ -62,7 +65,7 @@ fictional payload; only `kiosk` differs. The API accepts `syntheticKiosk` only a
 a boolean on the authenticated `synthetic-preview` stage. Customer stages ignore
 it and retain normal kiosk behavior. Both tests keep fresh template metadata and
 the exact reviewed technician option contract; neither reads signed records.
-The result panel exposes the three outgoing fields' GUID, scope, value,
+The result panel exposes the seven outgoing technical fields' GUID, scope, value,
 `fieldType` and `type`, plus the UTC request/response window and 3600-second
 expiration. These times bound creation; they are not provider-created timestamps.
 An accepted API response does not establish that dropdown selections rendered.
@@ -78,9 +81,20 @@ and preserves their exact option strings. A damaged `=351` is not a range.
 After the template editor publishes corrected options, independently capture its
 actual API `publishedVersion` and all three technician fields' exact option
 values before updating `lib/technician-enum-contracts.json`. A public HTML
-`wizardversionid` is not proof of the API publication version. The old version
-1051919 must not be rebound by guessing. Verify a fictional unsigned draft's
+`wizardversionid` is not proof of the API publication version. Publication1616022
+was independently verified by API on2026-10-14. Verify a fictional unsigned draft's
 rendered selections before claiming that the live integration is repaired.
+
+Live verification on2026-10-14 found that Smartwaiver rejects the published BSL
+value `311–330` (en dash) with HTTP402: its custom-field validator permits a
+narrower character set than the editor. A fictional diagnostic using `311-330`
+was accepted, but this differs from the live option and is not a production
+serialization rule. That draft's initial HTTP HTML contained the exact fictional
+name/email and four distinct final-setting values, while all three technician
+selects retained their placeholder. Isolated headless Chrome received403 before
+loading controls; post-script live selections still require the connected browser.
+Do not release this contract change as a confirmed prefill fix until the provider
+validation and dropdown rendering problems are resolved and verified end to end.
 
 Compare the opened forms without editing, signing, or submitting them. Preserve
 the fictional participant, exact option strings and template version. Do not

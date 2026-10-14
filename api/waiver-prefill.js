@@ -7,9 +7,11 @@ const templateCache = new Map();
 const OPERATIONS = new Set(['intake-read', 'intake-template', 'liability-template', 'prefill-build', 'prefill-create', 'prefill-response']);
 
 function syntheticTechnicalFields(payload, definition) {
-  // Only the fixed synthetic preview may expose these three configuration
+  // Only the fixed synthetic preview may expose these seven configuration
   // destinations and its outgoing defaults. Never inspect request/source data.
-  const groups = [['Skier Code'], ['Initial Indicator Value', 'DIN'], ['Boot Sole Length (mm)']];
+  const groups = [['Skier Code'], ['Initial Indicator Value', 'DIN'], ['Boot Sole Length (mm)'],
+    ['Final Indicator Setting: Left Toe'], ['Final Indicator Setting: Left Heel'],
+    ['Final Indicator Setting: Right Toe'], ['Final Indicator Setting: Right Heel']];
   const fields = [
     ...fieldList(definition, true).map(field => ({ ...field, scope: 'participant' })),
     ...fieldList(definition, false).map(field => ({ ...field, scope: 'waiver' })),
@@ -96,6 +98,10 @@ module.exports = async function handler(req, res) {
       const waiver={waiverId:'synthetic_snowos_preview',templateId:intakeId,email:'snowos-unsigned-test@example.invalid',participants:[{firstName:'SnowOS',lastName:'Unsigned Test',dob:'1990-01-01',isMinor:false,customParticipantFields:{w:{displayText:'Weight (lbs)',value:'180'},h:{displayText:'Height (in)',value:'71'},s:{displayText:'Skier Type: (Check One)',value:'II'}}}]};
       const participant=normalizeIntake(waiver).participants[0];
       const review={reviewed:true,waiverId:waiver.waiverId,participantIndex:0,participant:{first_name:participant.first_name,last_name:participant.last_name},source:{weight_lb:participant.weight_lb,height_in:participant.height_in,age:participant.age,skier_type:participant.skier_type},calculated:{skierCode:'M',din:'7',bootSoleLengthMm:315}};
+      // Distinct fictional values exercise each final destination independently.
+      // They are test fixtures, never defaults for real binding settings and
+      // never derived from the synthetic calculator DIN above.
+      review.finalSettings = { leftToe: '6.25', leftHeel: '6.50', rightToe: '5.75', rightHeel: '6.00' };
       draft=await during('prefill-build', () => buildLiabilityPrefill(waiver,intake,liability,0,review));templateId=liabilityId;
       // Support comparison only: customer requests cannot override kiosk mode.
       // Every other value still comes from the same fixed fictional fixture.
