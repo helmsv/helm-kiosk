@@ -39,6 +39,7 @@ for (const reason of ['unavailable', 'closed', 'denied', undefined, 'untrusted e
       const context = {
         window: { addEventListener(type, callback) { assert.equal(type, 'staff-session-ended'); handler = callback; } },
         document: { getElementById: node }, el: node,
+        liabilitySessionGeneration: 0, liabilityNotice: value => calls.push(`liability:${value}`),
         refreshGeneration: 0, dinRequestId: 0, current: {}, activeIntakeDetails: {}, activeIntakeMeta: {},
         store: new Map([['private', {}]]), hiddenSet: new Set(['private']), tb: node('tbody'),
         dinDialog: { hide(options) { assert.equal(options.restoreFocus, false); calls.push('hide:din'); } },
@@ -51,6 +52,8 @@ for (const reason of ['unavailable', 'closed', 'denied', undefined, 'untrusted e
       if (filename === 'tech.html') {
         assert.equal(context.current, null); assert.equal(context.activeIntakeDetails, null); assert.equal(context.activeIntakeMeta, null);
         assert.equal(context.store.size, 0); assert.equal(context.hiddenSet.size, 0);
+        assert.equal(context.liabilitySessionGeneration, 1);
+        assert.ok(calls.includes('liability:Staff sign-in is required before preparing or reopening a waiver.'));
         assert.equal(context.refreshGeneration, 1); assert.equal(context.dinRequestId, 1);
         assert.ok(calls.includes('clear:tbody')); assert.ok(calls.includes('hide:din'));
         assert.equal(node('intakeLoadStatus').textContent, expected);

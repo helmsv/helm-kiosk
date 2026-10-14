@@ -71,6 +71,31 @@ test('all captured BSL range boundaries are inclusive and uncovered lengths fail
   for (const length of [0, 199, 421, 315.5, '', null]) rejects(() => build({ bootSoleLengthMm: length }), 'TECHNICIAN_VALUE_INVALID');
 });
 
+test('an explicitly verified full BSL contract supports its lowest column without inventing a live template binding', () => {
+  // This is a candidate fixture only. The published contract above remains
+  // unchanged until the corrected Smartwaiver template is actually verified.
+  for (const [low, high, separator] of [['<=230', '>=351', '-'], ['≤230', '≥351', '–']]) {
+    const options = [low, ...['231-250', '251-270', '271-290', '291-310', '311-330', '331-350'].map(v => v.replace('-', separator)), high];
+    mutateContract(list => { list[0].fields.find(field => field.label === 'Boot Sole Length (mm)').values = options; }, () => {
+      const boundaries = [[200, 0], [230, 0], [231, 1], [250, 1], [251, 2], [270, 2], [271, 3], [290, 3], [291, 4], [310, 4], [311, 5], [330, 5], [331, 6], [350, 6], [351, 7], [420, 7]];
+      for (const [length, index] of boundaries) assert.equal(build({ bootSoleLengthMm: length }).waiverFields.synthetic_dynamic_bsl, options[index]);
+      for (const length of [199, 421, 230.5]) rejects(() => build({ bootSoleLengthMm: length }), 'TECHNICIAN_VALUE_INVALID');
+      rejects(() => build({}, { ...template(), publishedVersion: 1616021 }), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED');
+    });
+  }
+});
+
+test('damaged BSL operators are rejected and overlapping lowest columns remain ambiguous', () => {
+  for (const option of ['=351', '>351', '<230', '≤NaN', '<=9007199254740992']) {
+    mutateContract(list => { list[0].fields.find(field => field.label === 'Boot Sole Length (mm)').values = [option]; }, () => {
+      rejects(() => build(), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED');
+    });
+  }
+  mutateContract(list => { list[0].fields.find(field => field.label === 'Boot Sole Length (mm)').values.unshift('≤250'); }, () => {
+    rejects(() => build({ bootSoleLengthMm: 240 }), 'TECHNICIAN_ENUM_VALUE_AMBIGUOUS');
+  });
+});
+
 test('unverified template IDs or publication versions cannot reuse the captured contract', () => {
   for (const changed of [{ templateId: 'another_template' }, { templateId: '' }, { publishedVersion: 1051920 }, { publishedVersion: '1051919' }, { publishedVersion: undefined }]) rejects(() => build({}, { ...template(), ...changed }), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED');
   mutateContract(list => list.splice(0), () => rejects(() => build(), 'TECHNICIAN_ENUM_CONTRACT_UNVERIFIED'));

@@ -81,6 +81,7 @@
         <button id="testWaiverPreviewNonKiosk" type="button" class="btn-outline">Open unsigned test without kiosk mode</button>
         <pre id="waiverSetupResult" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
       </details>
+      <div id="liabilityOpenStatus" role="status" aria-live="polite" style="margin-top:12px;overflow-wrap:anywhere"></div>
       <div id="foot" class="text-xs text-gray-500 mt-3"></div>
       <div class="text-xs text-gray-400 mt-1">build: tech-sse-reconcile-date-v9</div>
     </div>
@@ -189,9 +190,10 @@
           </label>
           <p class="tiny">The reviewed code, DIN and boot sole length will be copied. Enter the final indicator settings separately on the final waiver.</p>
           <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
+          <p id="liabilityReviewStatus" role="status" aria-live="polite" style="overflow-wrap:anywhere">Enter the measured boot sole length, then review the calculation to open the prefilled waiver.</p>
           <div class="rental-dialog-actions mt-4 flex items-center gap-3">
             <button id="btnCopy" class="btn-outline">Copy All <span class="kbd">⌘C</span></button>
-            <button id="btnOpenLiab" class="btn">Open Liability</button>
+            <button id="btnOpenLiab" class="btn" disabled>Open Liability</button>
           </div>
 
         </div>
@@ -409,13 +411,12 @@
             const waiverId = btn.getAttribute("data-intake");
             const pindex   = parseInt(btn.getAttribute("data-pindex") || "0", 10);
 
-            if (action === "liab") {
-              await openLiabilityDraft({ waiverId, participantIndex:pindex }, btn);
-              return;
-            }
-
-            if (action === "din") {
-              if (!waiverId) { showToast("No intake ID on row."); return; }
+            // Both entry points require the same participant-specific technician review.
+            // Opening from a row must not silently omit the intended DIN transfer.
+            if (action === "din" || action === "liab") {
+              if (btn.disabled) return;
+              btn.disabled = true;
+              if (!waiverId) { showToast("No intake ID on row."); btn.disabled = false; return; }
               const requestId = ++dinRequestId;
               current = null;
               dinDialog.hide({ restoreFocus: false });
@@ -450,7 +451,7 @@
                 openDINModal(merged, { email: merged.email, lightspeed_id: lsid, first_name: merged.first_name, last_name: merged.last_name }, btn);
               } catch (e) {
                 if (requestId === dinRequestId) showToast(e.message || "Could not load the selected intake.");
-              }
+              } finally { btn.disabled = false; }
               return;
             }
 
@@ -500,6 +501,22 @@
       return await r.json();
     }
     const openingDrafts=new Set();
+    let liabilitySessionGeneration=0;
+    function liabilityNotice(message, recover){
+      for(const id of ['liabilityOpenStatus','liabilityReviewStatus']){
+        const output=document.getElementById(id);
+        output.replaceChildren(document.createTextNode(message));
+        if(recover){
+          const button=document.createElement('button');button.type='button';button.className='btn-outline';
+          button.textContent='Reopen prepared waiver';button.style.margin='8px';
+          button.addEventListener('click',recover);output.append(button);
+        }
+      }
+    }
+    function reflectLiabilityReviewButton(){
+      document.getElementById('btnOpenLiab').disabled=!(current?.calculation&&document.getElementById('reviewTechnician').checked)
+        || openingDrafts.has(rowKey(current?.waiver_id,current?.participant_index));
+    }
     const blankLiabilityWarning='This is a blank final liability waiver. No customer details, intake link, or DIN settings are transferred. Complete and verify every field before signing. The pending intake may remain listed.';
     async function openBlankLiability(tab, button){
       if(button)button.disabled=true;
@@ -524,26 +541,47 @@
     });
     async function openLiabilityDraft(selection, button, technicianReview){
       const key=rowKey(selection.waiverId,selection.participantIndex);
-      if(!selection.waiverId||openingDrafts.has(key))return;
+      if(!selection.waiverId)return;
+      if(openingDrafts.has(key)){liabilityNotice('This participant’s waiver is already being prepared.');return;}
+      const generation=liabilitySessionGeneration;
       const tab=window.open('about:blank','_blank');
-      if(!tab){showToast('Allow popups to open the final waiver.');return;}
+      if(!tab){liabilityNotice('The waiver window was blocked. Allow popups for Rentals, then select Open Liability again. No draft was requested.');return;}
       tab.opener=null; tab.document.title='Preparing final waiver';
       tab.document.body.textContent='Preparing editable details. Review and correct every field before signing.';
-      openingDrafts.add(key); if(button)button.disabled=true;
+      openingDrafts.add(key); if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+      liabilityNotice('Preparing the prefilled waiver. Keep this page open; do not submit another request.');
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),45000);
       try{
-        const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'liability',...selection,...(technicianReview?{technicianReview}:{})})});
-        const data=await response.json();
+        const response=await StaffSession.fetch('/api/waiver-prefill',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'liability',...selection,...(technicianReview?{technicianReview}:{})})});
+        let data;try{data=await response.json();}catch{throw new Error(`The waiver service returned an unreadable response (HTTP ${response.status}). No form was opened.`);}
         if(!response.ok||!data.url){
           const error=new Error(data.error||'Could not prepare the final waiver.');
           error.blankAllowed=response.status===502&&/\[prefill-create; HTTP 400\]$/.test(data.error||'');
           throw error;
         }
-        if(!StaffSession.isReady())throw new Error('Your staff session ended. Reopen the final waiver after signing in.');
+        if(generation!==liabilitySessionGeneration||!StaffSession.isReady())throw new Error('Your staff session ended. Reopen the final waiver after signing in.');
         const url=new URL(data.url);
         if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected waiver destination.');
-        if(Array.isArray(data.skippedFields)&&data.skippedFields.length)showToast('Some optional answers were not copied. Review and complete the final waiver.');
-        if(!tab.closed)tab.location.replace(url.toString());
+        const warning=Array.isArray(data.skippedFields)&&data.skippedFields.length
+          ? ` Not copied: ${data.skippedFields.join('; ')}. Complete and verify these fields on the waiver.` : '';
+        // Keep the same unsigned draft recoverable if the staff member closed the loading tab.
+        // The URL stays in this page's memory only; never create another draft automatically.
+        const preparedAt=Date.now();
+        const recover=()=>{
+          if(generation!==liabilitySessionGeneration||!StaffSession.isReady()){
+            liabilityNotice('Sign in again before reopening a prepared waiver.');return;
+          }
+          if(Date.now()-preparedAt>=Math.min(Number(data.expiresInSeconds)||3600,3600)*1000){
+            liabilityNotice('The prepared waiver has expired. Review the participant again and open a new waiver.');return;
+          }
+          window.open(url.toString(),'_blank','noopener,noreferrer');
+        };
+        if(!tab.closed){tab.location.replace(url.toString());liabilityNotice('Prefilled waiver opened. Review every field before signing.'+warning);}
+        else liabilityNotice('The loading window was closed. The prepared waiver is ready; reopen it without creating another draft.'+warning,recover);
       }catch(error){
+        if(error.name==='AbortError')error=new Error('Preparing the waiver timed out. An unsigned draft may have been created, but its link was not received. Nothing was signed. Check your connection before requesting a new draft.');
+        liabilityNotice(error.message||'Unable to prepare the waiver. Return to Rentals and try again.');
         if(!tab.closed)tab.document.body.textContent=error.message||'Unable to prepare the waiver. Return to Rentals and try again.';
         if(error.blankAllowed&&!tab.closed&&StaffSession.isReady()){
           const warning=tab.document.createElement('p');warning.textContent=blankLiabilityWarning;
@@ -552,7 +590,7 @@
           tab.document.body.append(warning,fallback);
         }
         showToast(error.message||'Unable to prepare the waiver.');
-      }finally{openingDrafts.delete(key);if(button)button.disabled=false;}
+      }finally{clearTimeout(timeout);openingDrafts.delete(key);if(button){button.disabled=false;button.removeAttribute('aria-busy');}reflectLiabilityReviewButton();}
     }
 
     // ----- participant extraction helpers for DIN -----
@@ -662,7 +700,7 @@
     function bslBandIndex(x){const n=Number(x);if(!Number.isFinite(n))return 0;if(n<231)return 0;if(n<=250)return 1;if(n<=270)return 2;if(n<=290)return 3;if(n<=310)return 4;if(n<=330)return 5;if(n<=350)return 6;return 7;}
     function codeFromWeightLbs(w){for(const r of CODE_BY_WEIGHT)if(w<=r.max)return r.code;return 0;}
     function codeFromHeightCm(cm){for(const r of CODE_BY_HEIGHT_CM)if(cm<=r.max)return r.code;return 0;}
-    const BSL_BANDS=["<231","231–250","251–270","271–290","291–310","311–330",">350"];
+    const BSL_BANDS=["≤230","231–250","251–270","271–290","291–310","311–330","331–350","≥351"];
     function computeDIN({weight_lb,height_in,age_years,skierType,bsl_mm,basis="auto",ageAdj="auto"}){
       const missing = RentalData.missingDinInputs({ weight_lb, height_in, age_years, skierType, bsl_mm });
       if (missing.length) return { din:null, code:"", band:"", explain:`Confirm ${missing.join(", ")} before calculating.` };
@@ -740,6 +778,7 @@
       document.getElementById("btnCopy").disabled = res.din == null;
     }
     function openDINModal(p, meta, trigger){
+      document.getElementById('liabilityReviewStatus').textContent='Enter the measured boot sole length, then review the calculation to open the prefilled waiver.';
       current = {
         waiver_id: p.waiver_id,
         participant_index: p.participant_index,
@@ -791,7 +830,7 @@
       } catch (error) { showToast(error.message); }
     });
     document.getElementById('reviewTechnician').addEventListener('change',()=>{
-      document.getElementById('btnOpenLiab').disabled=!(current?.calculation&&document.getElementById('reviewTechnician').checked);
+      reflectLiabilityReviewButton();
     });
     document.getElementById('btnOpenLiab').addEventListener('click',async event=>{
       if(!current?.calculation||!document.getElementById('reviewTechnician').checked){showToast('Review the current calculator values before copying them.');return;}
@@ -821,6 +860,8 @@
     document.getElementById('testWaiverPreviewNonKiosk').addEventListener('click',()=>openSyntheticPreview(false));
 
     window.addEventListener('staff-session-ended',event=>{
+      liabilitySessionGeneration++;
+      liabilityNotice('Staff sign-in is required before preparing or reopening a waiver.');
       refreshGeneration++; dinRequestId++; current=null; activeIntakeDetails=null; activeIntakeMeta=null;
       store.clear(); hiddenSet.clear(); tb.replaceChildren();
       dinDialog.hide({ restoreFocus: false });

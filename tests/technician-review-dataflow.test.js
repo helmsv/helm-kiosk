@@ -9,7 +9,8 @@ const { normalizeIntake } = require('../lib/intake-normalize');
 const { buildTechnicianPrefill } = require('../lib/technician-prefill');
 
 const html = fs.readFileSync(path.join(__dirname, '../tech.html'), 'utf8');
-const calculatorSource = html.slice(html.indexOf('    const CODE_BY_WEIGHT='), html.indexOf("    document.getElementById('checkWaiverFields')"));
+const reviewButtonSource = html.slice(html.indexOf('    function reflectLiabilityReviewButton()'), html.indexOf('    const blankLiabilityWarning'));
+const calculatorSource = reviewButtonSource + html.slice(html.indexOf('    const CODE_BY_WEIGHT='), html.indexOf("    document.getElementById('checkWaiverFields')"));
 const template = { templateId: 'synthetic_final_template', publishedVersion: 1, customParticipantFields: [
   { guid: 'synthetic_code', label: 'Skier Code', fieldType: 'textbox', type: 'string' },
   { guid: 'synthetic_din', label: 'DIN', fieldType: 'optionlist', type: 'enum' },
@@ -48,6 +49,7 @@ function calculatorHarness(w) {
     return nodes.get(id);
   }
   const context = {
+    openingDrafts: new Set(), rowKey: (id, index) => `${id}:${index}`,
     RentalData, document: { getElementById: node },
     RentalDialog: { create: () => ({ show() {}, hide() {} }) },
     normalizeSkierType: value => ['I', 'II', 'III'].includes(value) ? value : '',
@@ -235,5 +237,13 @@ test('authenticated API accepts the reviewed missing-source correction and rejec
     sw.request = oldRequest; global.fetch = oldFetch;
     for (const key of envKeys) if (oldEnv[key] === undefined) delete process.env[key]; else process.env[key] = oldEnv[key];
     delete require.cache[require.resolve('../api/waiver-prefill')];
+  }
+});
+
+// Display labels match the eight existing table columns; no table values change.
+test('BSL display includes both outer ranges and every interval boundary', () => {
+  const h = calculatorHarness(signedIntake('II'));
+  for (const [bsl, band] of [[230,'≤230'],[231,'231–250'],[250,'231–250'],[251,'251–270'],[270,'251–270'],[271,'271–290'],[290,'271–290'],[291,'291–310'],[310,'291–310'],[311,'311–330'],[330,'311–330'],[331,'331–350'],[350,'331–350'],[351,'≥351'],[420,'≥351']]) {
+    assert.equal(h.context.computeDIN({weight_lb:174,height_in:71,age_years:36,skierType:'II',bsl_mm:bsl}).band, band);
   }
 });

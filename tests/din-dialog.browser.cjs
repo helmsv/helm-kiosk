@@ -89,7 +89,7 @@ function checkFits(result, name) {
       await page.setContent(`<html><body style="margin:0;background:#f5f6fb"><header style="height:150px;padding:20px;box-sizing:border-box;font:24px system-ui">Synthetic SnowOS rental host</header><iframe title="Synthetic Kiosk" src="https://din-layout.test/tech.html" style="display:block;margin-left:20px;border:0;width:${item.width}px;height:${item.height}px"></iframe></body></html>`);
       const frame = await (await page.$('iframe')).contentFrame();
       await frame.waitForFunction(() => getComputedStyle(document.querySelector('main')).maxWidth === '1280px');
-      const opener = frame.getByRole('button', { name: 'Compute DIN', exact: true }).first();
+      const opener = frame.locator('button[data-action="liab"]').first();
       await opener.waitFor();
       const tableDisplay = await frame.locator('table').evaluate(node => getComputedStyle(node).display);
       assert.equal(tableDisplay, item.width < 640 ? 'block' : 'table', `${item.name}: tablet table retained`);

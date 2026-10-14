@@ -76,8 +76,12 @@ module.exports = async function handler(req, res) {
     if (!intakeId || (staffStage && !liabilityId)) return res.status(503).json({ error: 'Smartwaiver templates are not configured.' });
     let draft, templateId, technicalFields;
     if(input.stage === 'template-check') {
-      const definitions=await Promise.all([template(intakeId, 'intake-template'),template(liabilityId, 'liability-template')]);
-      const summarize=definition=>({title:definition.title||'',publishedVersion:definition.publishedVersion,participantFields:fieldList(definition,true).map(({label,fieldType,type})=>({label,fieldType,type})),waiverFields:fieldList(definition,false).map(({label,fieldType,type})=>({label,fieldType,type}))});
+      // Staff use this immediately after publishing template changes. Never
+      // report cached metadata as evidence of the current publication.
+      const definitions=await Promise.all([template(intakeId, 'intake-template', { fresh: true }),template(liabilityId, 'liability-template', { fresh: true })]);
+      // GUIDs are documented template configuration, not answers or secrets.
+      // Keep this summary behind staff authorization and omit all other data.
+      const summarize=definition=>({templateId:definition.templateId,title:definition.title||'',publishedVersion:definition.publishedVersion,participantFields:fieldList(definition,true).map(({guid,label,fieldType,type})=>({guid,label,fieldType,type})),waiverFields:fieldList(definition,false).map(({guid,label,fieldType,type})=>({guid,label,fieldType,type}))});
       return res.status(200).json({templates:definitions.map(summarize)});
     }
 

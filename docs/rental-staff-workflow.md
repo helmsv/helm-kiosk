@@ -27,6 +27,18 @@ is unchanged. Technicians must review the current participant, measured boot,
 skier code and calculated DIN before copying those three fields. Final binding
 indicator settings are not inferred or filled from calculated DIN.
 
+Both row actions, **Calculate DIN** and **Open Liability**, enter the same
+participant review. The latter previously bypassed review and omitted technician
+values from its request. Enter the measured BSL and explicitly review the current
+calculation before opening. Changing inputs invalidates that review.
+
+Opening status remains visible on the dashboard and review dialog. A blocked
+popup sends no request; repeated clicks while preparing send one request. If the
+loading tab is closed, the same prepared draft can be reopened from the page
+without creating another. Its link exists only in memory and cannot be reused
+after a staff-session change or its one-hour lifetime. A timeout does not retry
+automatically because the provider may already have created an unsigned draft.
+
 The final Smartwaiver is unsigned and editable, including default names/email.
 No polling or subsequent Kiosk render overwrites corrections made in Smartwaiver.
 Ambiguous participants, stale measurements, unsupported metadata and shared
@@ -54,6 +66,21 @@ The result panel exposes the three outgoing fields' GUID, scope, value,
 `fieldType` and `type`, plus the UTC request/response window and 3600-second
 expiration. These times bound creation; they are not provider-created timestamps.
 An accepted API response does not establish that dropdown selections rendered.
+
+The Tyrolia Equipment Rental Form, page 1, verifies eight BSL columns in mm:
+≤230, 231–250, 251–270, 271–290, 291–310, 311–330, 331–350, ≥351.
+Source: https://drive.google.com/file/d/1oECQ_T7zsMsa8J_gYRdfKrJx-IB2Ki-W/view
+These are inclusive ranges. The calculator display labels reflect all eight
+existing indexes; the DIN matrix and arithmetic are unchanged. The serializer
+accepts these inclusive labels only through a verified template/version contract
+and preserves their exact option strings. A damaged `=351` is not a range.
+
+After the template editor publishes corrected options, independently capture its
+actual API `publishedVersion` and all three technician fields' exact option
+values before updating `lib/technician-enum-contracts.json`. A public HTML
+`wizardversionid` is not proof of the API publication version. The old version
+1051919 must not be rebound by guessing. Verify a fictional unsigned draft's
+rendered selections before claiming that the live integration is repaired.
 
 Compare the opened forms without editing, signing, or submitting them. Preserve
 the fictional participant, exact option strings and template version. Do not
