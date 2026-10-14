@@ -46,11 +46,10 @@ test('captured three-dropdown contract serializes exact options and leaves raw r
   assert.match(result.copiedFields[1], /Initial Indicator Value/);
   const payload = buildLiabilityPrefill(w, {}, template(), 0, r).payload;
   assert.equal(payload.lockdownPrefill, false);
-  assert.equal(payload.customWaiverFields.synthetic_dynamic_din, '7,00');
-  assert.equal(payload.customWaiverFields.synthetic_dynamic_bsl, '311–330');
+  assert.equal(payload.customWaiverFields, undefined);
 });
 
-test('original participant GUIDs receive all seven explicit values independently, with final settings absent unless supplied', () => {
+test('original participant GUIDs receive four explicit final values and omit dropdowns, with final settings absent unless supplied', () => {
   const { dropdowns, finals } = require('./fixtures/rental-technical-fields');
   const target = { templateId, publishedVersion, customParticipantFields: structuredClone([...dropdowns, ...finals]) };
   const w = waiver(), r = review(w, { skierCode: 'M' });
@@ -58,9 +57,6 @@ test('original participant GUIDs receive all seven explicit values independently
   const before = JSON.stringify({ w, r, target });
   const result = buildLiabilityPrefill(w, {}, target, 0, r);
   assert.deepEqual(result.payload.participants[0].customFields, {
-    '5ktkNvPGcPnv4o2ea9jBuv': 'M',
-    k26zGhNRXqxW4AamXpHUEx: '7,00',
-    cVR22k9ALMuAs6EtVsau14: '311–330',
     byaj6QE3jt8u4FBcs5NQUU: '6.25',
     hQBJX42Bf4rTgA2whsjen2: '6.50',
     '4iaqE8mr6v1KmHuRtJf2Uu': '5.75',
@@ -68,12 +64,12 @@ test('original participant GUIDs receive all seven explicit values independently
   });
   assert.equal(result.payload.customWaiverFields, undefined);
   assert.equal(result.payload.lockdownPrefill, false);
-  assert.equal(result.copiedFields.filter(value => value.includes('(technician reviewed)')).length, 7);
+  assert.equal(result.copiedFields.filter(value => value.includes('(technician reviewed)')).length, 4);
   assert.equal(JSON.stringify({ w, r, target }), before, 'Source, explicit review and metadata are immutable');
   const withoutFinals = { ...r }; delete withoutFinals.finalSettings;
   const onlyCalculated = buildLiabilityPrefill(w, {}, target, 0, withoutFinals).payload.participants[0].customFields;
-  assert.equal(Object.keys(onlyCalculated).length, 3);
-  for (const field of finals) assert.equal(Object.hasOwn(onlyCalculated, field.guid), false);
+  assert.equal(onlyCalculated, undefined);
+  assert.deepEqual(result.manualFields.map(x=>x.value), ['M','7','315']);
   for (const field of finals) {
     const missing = { ...target, customParticipantFields: target.customParticipantFields.filter(item => item.guid !== field.guid) };
     rejects(() => buildLiabilityPrefill(w, {}, missing, 0, r), 'TECHNICIAN_FIELD_MISSING');
@@ -163,4 +159,19 @@ test('exact initial-indicator alias remains unique and excluded from unreviewed 
   const w = waiver(); w.customWaiverFields = { old: { displayText: 'Initial Indicator Value', value: '12,00' } };
   const source = { customFields: [definition('old', 'Initial Indicator Value')] };
   assert.equal(buildLiabilityPrefill(w, source, template()).payload.customWaiverFields, undefined);
+});
+
+test('original partial prefill omits choice values and unsupported contact groups even with stale dropdown contracts', () => {
+  const { dropdowns, finals } = require('./fixtures/rental-technical-fields');
+  const target = {templateId:'a2njtmnzxs7icea9mdxff6',publishedVersion:9999999,customParticipantFields:[...dropdowns,...finals]};
+  const w=waiver(),r=review(w,{skierCode:'M'});
+  w.email='fictional@example.invalid';w.address={address1:'123 Fictional Road',country:'US'};w.emergencyContact={name:'Fictional Contact',phone:'2025550100'};w.participants[0].phone='2025550100';w.participants[0].gender='Male';w.participants[0].middleName='FictionalMiddle';
+  r.finalSettings={leftToe:'6.25',leftHeel:'6.50',rightToe:'5.75',rightHeel:'6.00'};
+  const before=JSON.stringify({w,r});const result=buildLiabilityPrefill(w,{},target,0,r);const p=result.payload.participants[0];
+  assert.equal(p.phone,undefined);assert.equal(p.gender,undefined);assert.equal(p.middleName,undefined);assert.equal(result.payload.addressLineOne,undefined);assert.equal(result.payload.emergencyContactPhone,undefined);
+  assert.equal(result.payload.email,w.email);assert.equal(p.dob,w.participants[0].dob);assert.equal(p.firstName,w.participants[0].firstName);
+  for(const f of dropdowns)assert.equal(Object.hasOwn(p.customFields,f.guid),false);
+  assert.deepEqual(Object.values(p.customFields),['6.25','6.50','5.75','6.00']);
+  assert.deepEqual(result.manualFields.map(f=>f.value),['M','7','315']);
+  assert.equal(result.copiedFields.some(x=>/Phone/.test(x)),false);assert.equal(JSON.stringify({w,r}),before);
 });

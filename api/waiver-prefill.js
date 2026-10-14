@@ -125,7 +125,7 @@ module.exports = async function handler(req, res) {
       if (typeof result.prefill?.uuid !== 'string' || !result.prefill.uuid) throw new Error('Missing Smartwaiver prefill ID.');
       return safePrefillUrl(result.prefill.url, draft.tag, result.prefill.uuid);
     });
-    return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, reviewRequired: true, ...(technicalFields ? { technicalFields,
+    return res.status(200).json({ url, copiedFields: draft.copiedFields, skippedFields: draft.skippedFields, manualFields: draft.manualFields || [], reviewRequired: true, ...(technicalFields ? { technicalFields,
       testEvidence: { kiosk: draft.payload.kiosk, requestStartedAtUtc, responseReceivedAtUtc, expiresInSeconds: draft.payload.expiration },
     } : {}) });
   } catch (error) {

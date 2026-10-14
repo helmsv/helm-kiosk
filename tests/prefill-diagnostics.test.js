@@ -215,7 +215,7 @@ test('validation and missing/denied staff authorization retain existing status a
   assertPrivate(out);
 }));
 
-test('both draft stages refresh destination metadata and reject publication changes before creating a reviewed prefill', async () => environment(async () => {
+test('both draft stages refresh destination metadata and omit dropdowns independently of old enum publication contracts', async () => environment(async () => {
   const { normalizeIntake } = require('../lib/intake-normalize');
   const waiver = { waiverId: WAIVER, templateId: INTAKE, email: 'private@example.invalid', participants: [{
     firstName: 'Synthetic', lastName: 'Example', dob: '1990-01-01', isMinor: false,
@@ -266,18 +266,16 @@ test('both draft stages refresh destination metadata and reject publication chan
     assert.equal(out.body.templates[1].publishedVersion, 2, 'Staff template-check must reflect the newly published version');
     assert.equal(metadataReads, 3);
     out = await run(body);
-    assert.equal(out.statusCode, 400);
-    assert.match(out.body.error, /dropdown choices are not verified for this template version/);
-    assert.ok(out.body.error.endsWith('[prefill-build]'));
+    assert.equal(out.statusCode, 200);
+    assert.deepEqual(out.body.manualFields, [{label:'DIN',value:'7'}]);
     assert.equal(metadataReads, 4);
-    assert.equal(prefillPosts, 1, 'Changed publication must fail before any new prefill POST');
-    assertPrivate(out);
+    assert.equal(prefillPosts, 2, 'Omitted dropdowns do not require serializing an enum contract');
     rejectMetadata = true;
     out = await run(body);
     assert.equal(out.statusCode, 502);
     assert.ok(out.body.error.endsWith('[liability-template; HTTP 503]'));
     assert.equal(metadataReads, 5);
-    assert.equal(prefillPosts, 1, 'Fresh-fetch failure must never fall back to cached metadata');
+    assert.equal(prefillPosts, 2, 'Fresh-fetch failure must never fall back to cached metadata');
     assertPrivate(out);
     if (stage === 'synthetic-preview') assert.equal(signedReads, 0);
   }

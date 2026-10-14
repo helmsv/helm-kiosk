@@ -62,7 +62,7 @@ test('only selected child receives participant-scoped values; siblings and guard
   assert.equal(payload.guardian.customFields, undefined);
   assert.equal(payload.participants[1].firstName, 'Second');
   assert.equal(payload.participants[1].customFields.synthetic_final_0, 'L');
-  assert.equal(payload.participants[1].customFields.synthetic_final_1, '6.00');
+  assert.equal(payload.participants[1].customFields.synthetic_final_1, undefined);
   assert.equal(payload.lockdownPrefill, false);
 });
 
@@ -70,20 +70,20 @@ test('participating guardian maps to guardian fields without borrowing from a ch
   const w = waiver([participant(), participant('Child', '2014-03-01', true)]);
   const payload = buildLiabilityPrefill(w, sourceTemplate, template(), 0, review(w)).payload;
   assert.equal(payload.guardian.participant, true);
-  assert.equal(payload.guardian.customFields.synthetic_final_1, '6.00');
+  assert.equal(payload.guardian.customFields.synthetic_final_1, undefined);
   assert.equal(payload.participants[0].customFields, undefined);
   const childPayload = buildLiabilityPrefill(w, sourceTemplate, template(), 1, review(w, 1)).payload;
   assert.equal(childPayload.guardian.customFields, undefined);
-  assert.equal(childPayload.participants[0].customFields.synthetic_final_1, '6.00');
+  assert.equal(childPayload.participants[0].customFields.synthetic_final_1, undefined);
 });
 
 test('waiver-scoped technician fields require exactly one participant, including guardian families', () => {
   const single = waiver(), t = template('waiver');
   const result = buildLiabilityPrefill(single, sourceTemplate, t, 0, review(single)).payload;
-  assert.equal(result.customWaiverFields.synthetic_final_1, '6.00');
+  assert.equal(result.customWaiverFields.synthetic_final_1, undefined);
   assert.equal(result.participants[0].customFields, undefined);
   const oneChild = { ...waiver([participant('Child', '2014-03-01', true)]), guardian: { firstName: 'Guardian', lastName: 'Synthetic', dob: '1980-01-01' } };
-  assert.equal(buildLiabilityPrefill(oneChild, sourceTemplate, t, 0, review(oneChild)).payload.customWaiverFields.synthetic_final_1, '6.00');
+  assert.equal(buildLiabilityPrefill(oneChild, sourceTemplate, t, 0, review(oneChild)).payload.customWaiverFields.synthetic_final_1, undefined);
   for (const w of [waiver([participant(), participant('Child', '2014-03-01', true)]), { ...oneChild, participants: [participant('Child', '2014-03-01', true), participant('Other', '2017-08-20', true)] }]) {
     throwsCode(() => buildLiabilityPrefill(w, sourceTemplate, t, 1, review(w, 1)), 'TECHNICIAN_FAMILY_SCOPE_UNSUPPORTED');
   }
@@ -196,7 +196,7 @@ test('generic intake mapping never copies old technician values, signatures, or 
   assert.equal(without.payload.participants[0].customFields, undefined);
   const r = review(w); r.signature = 'SIGNATURE_SECRET'; r.consent = true;
   const withReview = buildLiabilityPrefill(w, s, t, 0, r);
-  assert.equal(withReview.payload.participants[0].customFields.synthetic_final_1, '6.00');
+  assert.equal(withReview.payload.participants[0].customFields.synthetic_final_1, undefined);
   assert.equal(withReview.payload.participants[0].customFields.synthetic_final_3, undefined);
   assert.doesNotMatch(JSON.stringify(withReview.payload), /OLD_UNREVIEWED|SIGNATURE_SECRET|consent/);
   assert.equal(withReview.payload.lockdownPrefill, false);

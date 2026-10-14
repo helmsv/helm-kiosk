@@ -209,7 +209,7 @@ test('authenticated API accepts the reviewed missing-source correction and rejec
     assert.equal(success.statusCode, 200);
     assert.equal(authChecks, 2, 'staff is checked before source reads and again before the unsigned draft POST');
     assert.equal(posts.length, 1);
-    assert.equal(posts[0].participants[0].customFields.synthetic_din, '6');
+    assert.equal(posts[0].participants[0].customFields.synthetic_din, undefined);
     assert.equal(posts[0].participants[0].customFields.synthetic_code, 'L');
     assert.equal(posts[0].participants[0].customFields.synthetic_bsl, '315');
     assert.equal(posts[0].lockdownPrefill, false);

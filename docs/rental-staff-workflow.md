@@ -24,7 +24,7 @@ cache/request budget is not a distributed global quota.
 The intake question “Skier Type: (Check One)” accepts one explicit selection.
 Missing/conflicting data never defaults to Type II. The existing chart arithmetic
 is unchanged. Technicians must review the current participant, measured boot,
-skier code and calculated DIN before copying those three fields. Final binding
+skier code and calculated DIN before opening the partially prefilled waiver. Final binding
 indicator settings are not inferred or filled from calculated DIN. Staff may
 enter all four final toe/heel settings explicitly or leave all four blank. A
 partial group blocks opening. Any edit resets review; reviewed numeric strings
@@ -63,12 +63,13 @@ uses fixed fictional adult data and must never be signed.
 For support ticket 4100890, the two unsigned test buttons use the same fixed
 fictional payload; only `kiosk` differs. The API accepts `syntheticKiosk` only as
 a boolean on the authenticated `synthetic-preview` stage. Customer stages ignore
-it and retain normal kiosk behavior. Both tests keep fresh template metadata and
-the exact reviewed technician option contract; neither reads signed records.
-The result panel exposes the seven outgoing technical fields' GUID, scope, value,
+it and retain normal kiosk behavior. Both tests use fresh template metadata;
+neither reads signed records. Dropdowns are omitted from both requests.
+The result panel exposes the four outgoing final fields' GUID, scope, value,
 `fieldType` and `type`, plus the UTC request/response window and 3600-second
 expiration. These times bound creation; they are not provider-created timestamps.
-An accepted API response does not establish that dropdown selections rendered.
+The panel also lists the three reviewed values for manual completion. An accepted
+API response does not establish that the rendered form is complete.
 
 The Tyrolia Equipment Rental Form, page 1, verifies eight BSL columns in mm:
 ≤230, 231–250, 251–270, 271–290, 291–310, 311–330, 331–350, ≥351.
@@ -99,8 +100,17 @@ selected, signed or submitted. Template metadata exposes GUID/type/label only;
 the documented prefill schema is GUID-to-string and provides no alternate
 optionlist encoding. Obtain a provider-confirmed representation or fix before
 changing the dropdown schema or assuming an ASCII-only edit resolves this.
-Do not release this contract change as a confirmed prefill fix until the provider
-validation and dropdown rendering problems are resolved and verified end to end.
+The approved partial-prefill workflow does not send optionlists. It keeps
+Skier Code, Initial Indicator Value and BSL genuinely unfilled and lists the
+exact reviewed values for manual entry in the dashboard. Four final text settings
+are sent only when independently entered and reviewed; missing finals remain
+blank. Dropdown serialization remains available only as an internal tested
+contract utility and is not used by either liability or synthetic-preview APIs.
+Ordinary intake choice fields are likewise omitted, with an explicit audit note.
+For the original agreement, standard fields are limited to first/last name, DOB and email;
+middle name, phone, gender, address and emergency contacts absent from that form are omitted.
+Fresh field metadata and all identity/review checks still apply. This is a
+partial-prefill improvement, not a claim that dropdown prefill is repaired.
 
 Compare the opened forms without editing, signing, or submitting them. Preserve
 the fictional participant, exact option strings and template version. Do not

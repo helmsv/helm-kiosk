@@ -42,7 +42,7 @@ test('adult maps full name, DOB, phone, common custom answers, address and emerg
   assert.equal(payload.participants[0].dob, '1990-04-17');
   assert.equal(payload.participants[0].phone, '5550100');
   assert.equal(payload.participants[0].customFields.targetweight13, '174');
-  assert.equal(payload.participants[0].customFields.targetskier013, 'II');
+  assert.equal(payload.participants[0].customFields.targetskier013, undefined);
   assert.equal(payload.customWaiverFields.targetaddress, '123 Example St');
   assert.equal(payload.addressLineOne, '123 Example St');
   assert.equal(payload.emergencyContactPhone, '5550101');
@@ -126,7 +126,7 @@ test('array answers are explicitly reported for review rather than silently drop
   const w = waiver([adult({ customParticipantFields: { sourceActivities: { value: ['Ski', 'Snowboard'], displayText: 'Activities' } } })]);
   const result = buildLiabilityPrefill(w, s, t);
   assert.equal(result.payload.participants[0].customFields, undefined);
-  assert.match(result.skippedFields[0], /Activities.*enter this answer/);
+  assert.match(result.skippedFields[0], /Activities.*complete manually/);
 });
 
 

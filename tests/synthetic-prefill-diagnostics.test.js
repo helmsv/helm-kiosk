@@ -42,7 +42,7 @@ async function scenario(action, { scope = 'participant', rejected = false, provi
   finally { global.fetch = oldFetch; process.env = oldEnv; }
 }
 
-test('synthetic diagnostics expose exactly the actual seven outgoing fictional values and exact metadata scope', async () => {
+test('synthetic diagnostics expose exactly the actual four outgoing final values and three manual references and exact metadata scope', async () => {
   for (const scope of ['participant', 'waiver']) await scenario(async ({ run, calls, payloads }) => {
     const out = await run({ stage: 'synthetic-preview', waiverId: PRIVATE, first_name: PRIVATE, email: PRIVATE, participants: [{ firstName: PRIVATE }], technicianReview: { calculated: { skierCode: PRIVATE }, finalSettings: { leftToe: PRIVATE, leftHeel: PRIVATE, rightToe: PRIVATE, rightHeel: PRIVATE } }, finalSettings: { leftToe: PRIVATE }, technicalFields: [{ label: PRIVATE, guid: PRIVATE, value: PRIVATE }], templateId: PRIVATE });
     assert.equal(out.statusCode, 200, out.body.error);
@@ -52,12 +52,14 @@ test('synthetic diagnostics expose exactly the actual seven outgoing fictional v
     assert.equal(payloads.length, 1);
     assert.equal(payloads[0].participants[0].firstName, 'SnowOS');
     const values = scope === 'participant' ? payloads[0].participants[0].customFields : payloads[0].customWaiverFields;
-    assert.deepEqual(out.body.technicalFields, defs.map(({ label, guid, fieldType, type }) => ({ label, guid, scope, value: values[guid], fieldType, type })));
-    assert.deepEqual(out.body.technicalFields.map(field => field.value), ['M', '7', '315', '6.25', '6.50', '5.75', '6.00']);
+    assert.deepEqual(out.body.technicalFields, finals.map(({ label, guid, fieldType, type }) => ({ label, guid, scope, value: values[guid], fieldType, type })));
+    assert.deepEqual(out.body.technicalFields.map(field => field.value), ['6.25', '6.50', '5.75', '6.00']);
     assert.equal(JSON.stringify(out.body.technicalFields).includes(PRIVATE), false);
     assert.equal(JSON.stringify(payloads).includes(PRIVATE), false);
     for (const field of out.body.technicalFields) assert.deepEqual(Object.keys(field), ['label', 'guid', 'scope', 'value', 'fieldType', 'type']);
-    assert.equal(Object.keys(values).length, 7);
+    assert.equal(Object.keys(values).length, 4);
+    assert.deepEqual(out.body.manualFields.map(x=>x.value), ['M','7','315']);
+    for(const field of dropdowns) assert.equal(Object.hasOwn(values,field.guid),false);
   }, { scope });
 });
 
@@ -101,7 +103,7 @@ test('the verified DIN alias is reported using its exact metadata label', async 
   await scenario(async ({ run }) => {
     const out = await run({ stage: 'synthetic-preview' });
     assert.equal(out.statusCode, 200);
-    assert.equal(out.body.technicalFields[1].label, 'DIN');
+    assert.equal(out.body.manualFields[1].label, 'DIN');
   }, { metadata: { templateId: LIABILITY, publishedVersion: 1, customParticipantFields: fields } });
 });
 
