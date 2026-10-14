@@ -50,8 +50,8 @@ test('captured three-dropdown contract serializes exact options and leaves raw r
 });
 
 test('original participant GUIDs receive four explicit final values and omit dropdowns, with final settings absent unless supplied', () => {
-  const { dropdowns, finals } = require('./fixtures/rental-technical-fields');
-  const target = { templateId, publishedVersion, customParticipantFields: structuredClone([...dropdowns, ...finals]) };
+  const { dropdowns, finals, dates } = require('./fixtures/rental-technical-fields');
+  const target = { templateId, publishedVersion, customFields: structuredClone(dates), customParticipantFields: structuredClone([...dropdowns, ...finals]) };
   const w = waiver(), r = review(w, { skierCode: 'M' });
   r.finalSettings = { leftToe: '6.25', leftHeel: '6.50', rightToe: '5.75', rightHeel: '6.00' };
   const before = JSON.stringify({ w, r, target });
@@ -62,7 +62,7 @@ test('original participant GUIDs receive four explicit final values and omit dro
     '4iaqE8mr6v1KmHuRtJf2Uu': '5.75',
     '5vcq7mUTY11uT9Bf6wzmeh': '6.00',
   });
-  assert.equal(result.payload.customWaiverFields, undefined);
+  assert.equal(result.payload.customWaiverFields.jv9eoZqdVosVmeXyh2p4yZ, '2027-03-16');
   assert.equal(result.payload.lockdownPrefill, false);
   assert.equal(result.copiedFields.filter(value => value.includes('(technician reviewed)')).length, 4);
   assert.equal(JSON.stringify({ w, r, target }), before, 'Source, explicit review and metadata are immutable');
@@ -162,8 +162,8 @@ test('exact initial-indicator alias remains unique and excluded from unreviewed 
 });
 
 test('original partial prefill omits choice values and unsupported contact groups even with stale dropdown contracts', () => {
-  const { dropdowns, finals } = require('./fixtures/rental-technical-fields');
-  const target = {templateId:'a2njtmnzxs7icea9mdxff6',publishedVersion:9999999,customParticipantFields:[...dropdowns,...finals]};
+  const { dropdowns, finals, dates } = require('./fixtures/rental-technical-fields');
+  const target = {templateId:'a2njtmnzxs7icea9mdxff6',publishedVersion:9999999,customFields:structuredClone(dates),customParticipantFields:[...dropdowns,...finals]};
   const w=waiver(),r=review(w,{skierCode:'M'});
   w.email='fictional@example.invalid';w.address={address1:'123 Fictional Road',country:'US'};w.emergencyContact={name:'Fictional Contact',phone:'2025550100'};w.participants[0].phone='2025550100';w.participants[0].gender='Male';w.participants[0].middleName='FictionalMiddle';
   r.finalSettings={leftToe:'6.25',leftHeel:'6.50',rightToe:'5.75',rightHeel:'6.00'};

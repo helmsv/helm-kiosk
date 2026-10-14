@@ -120,6 +120,24 @@ If needed, give only the fictional test's UUID and UTC window privately to the
 original Smartwaiver support ticket, preferably after its expiration; never
 include API keys, staff tokens, signed-customer identifiers or private URLs.
 
+### Rental dates on the final waiver
+
+New unsigned prefills for the original rental agreement populate **Date Out**
+with the current date in `America/Los_Angeles` when the server creates the draft.
+**Date Returning** is fixed to **March 16, 2027**. Dates are sent as `YYYY-MM-DD`
+in waiver-level custom fields; the form displays its normal readable date format.
+Reopening an existing draft preserves its dates; creating a new draft recomputes
+Date Out. Neither date is copied from an older intake or taken from the browser.
+
+The mapper verifies the original date field GUIDs, labels, types and waiver scope.
+If a destination can no longer be verified, it remains unfilled and the staff
+response flags that date for manual completion. The four final settings and
+manual DIN dropdown workflow are unchanged. The separate **Open blank liability
+waiver** fallback remains fully manual, including dates.
+
+A seasonal return-date admin setting is recorded in [the backlog](backlog.md)
+for future work. This change does not add that setting or update signed waivers.
+
 ### Returns read performance
 
 `GET /api/rentals-outstanding` verifies the current staff session and performs a
