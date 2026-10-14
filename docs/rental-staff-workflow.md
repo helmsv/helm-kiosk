@@ -89,10 +89,16 @@ Live verification on2026-10-14 found that Smartwaiver rejects the published BSL
 value `311–330` (en dash) with HTTP402: its custom-field validator permits a
 narrower character set than the editor. A fictional diagnostic using `311-330`
 was accepted, but this differs from the live option and is not a production
-serialization rule. That draft's initial HTTP HTML contained the exact fictional
-name/email and four distinct final-setting values, while all three technician
-selects retained their placeholder. Isolated headless Chrome received403 before
-loading controls; post-script live selections still require the connected browser.
+serialization rule. The same draft was inspected in connected Mac Chrome after
+`document.readyState` became `complete`. The fictional name/email and four
+distinct final-setting values rendered exactly. All three technician selects
+remained at `Please Select...`, index0, value `-9999998723`. Skier Code `M` and
+Initial Indicator `7,00` exist as exact option values, so the confirmed selection
+failure is broader than the BSL character mismatch. No fields were manually
+selected, signed or submitted. Template metadata exposes GUID/type/label only;
+the documented prefill schema is GUID-to-string and provides no alternate
+optionlist encoding. Obtain a provider-confirmed representation or fix before
+changing the dropdown schema or assuming an ASCII-only edit resolves this.
 Do not release this contract change as a confirmed prefill fix until the provider
 validation and dropdown rendering problems are resolved and verified end to end.
 
