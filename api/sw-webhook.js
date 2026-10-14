@@ -12,6 +12,7 @@ const SW_V4 = `${SW_BASE}/v4`;
 
 const { getPool } = require("./_db");
 const { ensureSchema } = require("./_ensureSchema");
+const { liabilityTemplateId, liabilityHistoryTemplateIds } = require('../lib/rental-templates');
 
 // Upstash Redis REST (optional but used in your app): UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 const RURL = process.env.UPSTASH_REDIS_REST_URL;
@@ -21,7 +22,7 @@ const LAST_EVENT_KEY = "sw:last_event";
 const VERSION_KEY = "sw:version";
 
 // Template ID to treat as “rental/outstanding”
-const LIABILITY_WAIVER_ID = (process.env.LIABILITY_WAIVER_ID || "").trim();
+const LIABILITY_TEMPLATE_IDS = liabilityHistoryTemplateIds(liabilityTemplateId());
 
 // Smartwaiver API key for enrichment (you already used this for backfill)
 const SW_API_KEY = process.env.SW_API_KEY || process.env.SMARTWAIVER_API_KEY || "";
@@ -85,8 +86,8 @@ async function upsertOutstandingAgreementFromWaiver(waiver) {
 
   const templateId = waiver.templateId ? String(waiver.templateId) : null;
 
-  // Only ingest the rental template if configured
-  if (LIABILITY_WAIVER_ID && templateId && templateId !== LIABILITY_WAIVER_ID) {
+  // Preserve outstanding rentals and late events from the original agreement.
+  if (!LIABILITY_TEMPLATE_IDS.includes(templateId)) {
     return { upserted: false, reason: "template filtered" };
   }
 

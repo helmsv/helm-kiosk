@@ -24,7 +24,7 @@ cache/request budget is not a distributed global quota.
 The intake question “Skier Type: (Check One)” accepts one explicit selection.
 Missing/conflicting data never defaults to Type II. The existing chart arithmetic
 is unchanged. Technicians must review the current participant, measured boot,
-skier code and calculated DIN before opening the partially prefilled waiver. Final binding
+skier code and calculated DIN before opening the editable prefilled waiver. Final binding
 indicator settings are not inferred or filled from calculated DIN. Staff may
 enter all four final toe/heel settings explicitly or leave all four blank. A
 partial group blocks opening. Any edit resets review; reviewed numeric strings
@@ -60,57 +60,48 @@ Run `npm test`. An optional fully mocked Playwright suite is at
 checks read only configured template metadata. The unsigned synthetic preview
 uses fixed fictional adult data and must never be signed.
 
-For support ticket 4100890, the two unsigned test buttons use the same fixed
-fictional payload; only `kiosk` differs. The API accepts `syntheticKiosk` only as
-a boolean on the authenticated `synthetic-preview` stage. Customer stages ignore
-it and retain normal kiosk behavior. Both tests use fresh template metadata;
-neither reads signed records. Dropdowns are omitted from both requests.
-The result panel exposes the four outgoing final fields' GUID, scope, value,
-`fieldType` and `type`, plus the UTC request/response window and 3600-second
-expiration. These times bound creation; they are not provider-created timestamps.
-The panel also lists the three reviewed values for manual completion. An accepted
-API response does not establish that the rendered form is complete.
+### Text-based rental agreement
 
-The Tyrolia Equipment Rental Form, page 1, verifies eight BSL columns in mm:
-≤230, 231–250, 251–270, 271–290, 291–310, 311–330, 331–350, ≥351.
-Source: https://drive.google.com/file/d/1oECQ_T7zsMsa8J_gYRdfKrJx-IB2Ki-W/view
-These are inclusive ranges. The calculator display labels reflect all eight
-existing indexes; the DIN matrix and arithmetic are unchanged. The serializer
-accepts these inclusive labels only through a verified template/version contract
-and preserves their exact option strings. A damaged `=351` is not a range.
+The configured production destination is **Helm of Sun Valley - Rental Agreement
+(Text Based)**, template `rrqn8ray3vbl19h2reyxrf`. Its eight participant text fields
+were API-prefilled and verified in connected Chrome; the renamed publication is
+1620048. The former test copy is now explicitly approved as the production
+agreement. The original `a2njtmnzxs7icea9mdxff6` remains unchanged for rollback.
 
-After the template editor publishes corrected options, independently capture its
-actual API `publishedVersion` and all three technician fields' exact option
-values before updating `lib/technician-enum-contracts.json`. A public HTML
-`wizardversionid` is not proof of the API publication version. Publication1616022
-was independently verified by API on2026-10-14. Verify a fictional unsigned draft's
-rendered selections before claiming that the live integration is repaired.
+Skier Code, the single calculated Initial Indicator Value, measured BSL in mm,
+and the existing inclusive BSL range each have a separate participant textbox.
+The mapper verifies their exact GUIDs, labels, types and participant scope from
+fresh template metadata. It never copies stale technician answers from an intake.
+The four final toe/heel settings remain independent, copied only when all four
+are explicitly entered and reviewed. Blank finals stay blank. No DIN arithmetic
+or classification changed. Other choice fields, including Boot Sole Type, still
+require manual completion.
 
-Live verification on2026-10-14 found that Smartwaiver rejects the published BSL
-value `311–330` (en dash) with HTTP402: its custom-field validator permits a
-narrower character set than the editor. A fictional diagnostic using `311-330`
-was accepted, but this differs from the live option and is not a production
-serialization rule. The same draft was inspected in connected Mac Chrome after
-`document.readyState` became `complete`. The fictional name/email and four
-distinct final-setting values rendered exactly. All three technician selects
-remained at `Please Select...`, index0, value `-9999998723`. Skier Code `M` and
-Initial Indicator `7,00` exist as exact option values, so the confirmed selection
-failure is broader than the BSL character mismatch. No fields were manually
-selected, signed or submitted. Template metadata exposes GUID/type/label only;
-the documented prefill schema is GUID-to-string and provides no alternate
-optionlist encoding. Obtain a provider-confirmed representation or fix before
-changing the dropdown schema or assuming an ASCII-only edit resolves this.
-The approved partial-prefill workflow does not send optionlists. It keeps
-Skier Code, Initial Indicator Value and BSL genuinely unfilled and lists the
-exact reviewed values for manual entry in the dashboard. Four final text settings
-are sent only when independently entered and reviewed; missing finals remain
-blank. Dropdown serialization remains available only as an internal tested
-contract utility and is not used by either liability or synthetic-preview APIs.
-Ordinary intake choice fields are likewise omitted, with an explicit audit note.
-For the original agreement, standard fields are limited to first/last name, DOB and email;
-middle name, phone, gender, address and emergency contacts absent from that form are omitted.
-Fresh field metadata and all identity/review checks still apply. This is a
-partial-prefill improvement, not a claim that dropdown prefill is repaired.
+All custom text fields are editable; `lockdownPrefill` does not lock them. Staff
+must compare calculated references with SnowOS and independently review the four
+actual final settings immediately before signing. The visible review reminder
+and returned manual/skipped-field details support this check.
+
+Range text uses provider-compatible ASCII: `230 or less`, `231-250`, `251-270`,
+`271-290`, `291-310`, `311-330`, `331-350`, `351 or more`. These describe the same
+inclusive columns as the existing chart; they do not alter measurements or DIN.
+The exact measured BSL is always sent separately. The former three dropdowns are
+absent from this published template. Their provider selection issue is not
+claimed fixed; legacy-template prefills continue to omit dropdown values.
+
+The authenticated synthetic preview uses fixed fictional adult identity and
+M / 7 / 315 / 311-330, plus distinct finals 6.25 / 6.50 / 5.75 / 6.00. It reads no
+signed records and reports the eight outgoing field destinations and values,
+manual references if any, request/response UTC times and 3600-second expiry.
+`syntheticKiosk` remains a boolean comparison option only for this test stage.
+Never sign or submit these fixtures. API acceptance alone is not rendering proof.
+
+Signed-agreement reconciliation, latest-liability lookup and webhook ingestion
+accept both verified rental templates, so original outstanding rentals and late
+original-template events remain visible. New prefill and blank-waiver opening
+use only the configured `LIABILITY_WAIVER_ID`. Existing database return records
+are not migrated or rewritten. The admin backfill endpoint continues to target
+the currently configured template; this release does not invoke it.
 
 Compare the opened forms without editing, signing, or submitting them. Preserve
 the fictional participant, exact option strings and template version. Do not
@@ -122,17 +113,17 @@ include API keys, staff tokens, signed-customer identifiers or private URLs.
 
 ### Rental dates on the final waiver
 
-New unsigned prefills for the original rental agreement populate **Date Out**
+New unsigned prefills for either verified rental agreement populate **Date Out**
 with the current date in `America/Los_Angeles` when the server creates the draft.
 **Date Returning** is fixed to **March 16, 2027**. Dates are sent as `YYYY-MM-DD`
 in waiver-level custom fields; the form displays its normal readable date format.
 Reopening an existing draft preserves its dates; creating a new draft recomputes
 Date Out. Neither date is copied from an older intake or taken from the browser.
 
-The mapper verifies the original date field GUIDs, labels, types and waiver scope.
+The mapper verifies the preserved date field GUIDs, labels, types and waiver scope.
 If a destination can no longer be verified, it remains unfilled and the staff
 response flags that date for manual completion. The four final settings and
-manual DIN dropdown workflow are unchanged. The separate **Open blank liability
+calculated text references remain independent. The separate **Open blank liability
 waiver** fallback remains fully manual, including dates.
 
 A seasonal return-date admin setting is recorded in [the backlog](backlog.md)
@@ -169,3 +160,18 @@ The preceding protected deployment769b494 already exhibited prefill-create400;
 rolling back the synthetic kiosk comparison does not establish a recovery for
 that upstream failure. The blank recovery is separate from support4100890's
 accepted prefills with unselected technician dropdowns.
+
+### Text-template rollout and rollback
+
+The production Vercel project is `helm-kiosk` (repo root), embedded by SnowOS at
+`https://helm-kiosk.vercel.app/tech.html`. Set production `LIABILITY_WAIVER_ID` to
+`rrqn8ray3vbl19h2reyxrf` with this mapping release; leave intake configuration
+unchanged. Refresh existing SnowOS rental tabs after rollout. Verify configured
+metadata and a fresh unsigned synthetic preview through the authenticated iframe.
+
+For rollback, restore production `LIABILITY_WAIVER_ID` to
+`a2njtmnzxs7icea9mdxff6` and deploy the prior known-good release. Restoring the
+setting is essential for subsequent deployments; reverting only the code would
+leave an incompatible destination. A previous deployment carries its original
+environment snapshot. Do not change signed documents, delete either template,
+or reuse old draft links as proof of the current configuration.

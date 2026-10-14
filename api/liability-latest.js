@@ -1,4 +1,5 @@
 const { requireStaff } = require('../lib/staff-auth');
+const { liabilityTemplateId, liabilityHistoryTemplateIds } = require('../lib/rental-templates');
 // Next.js API route: /api/liability-latest
 // Returns the most-recent signed liability for a given email.
 // Always 200 so front-end fetchJSONOrThrow() doesn’t throw.
@@ -20,10 +21,7 @@ module.exports = async function handler(req, res) {
 
   const apiKey = process.env.SW_API_KEY || "";
   const email = (req.query.email || "").toString().trim();
-  const templateId =
-    process.env.LIABILITY_WAIVER_ID ||
-    process.env.SW_TEMPLATE_LIABILITY || // optional alias
-    "";
+  const templateId = liabilityTemplateId();
 
   if (!apiKey) {
     return res.status(200).json({ error: "Missing SW_API_KEY", rows: [], row: null, count: 0 });
@@ -31,6 +29,7 @@ module.exports = async function handler(req, res) {
   if (!email) {
     return res.status(200).json({ error: "Missing email", rows: [], row: null, count: 0 });
   }
+  if (!templateId) return res.status(503).json({ error: 'Liability template is not configured.', rows: [], row: null, count: 0 });
 
   try {
     // Query Smartwaiver by email (optionally filter by templateId if provided)
@@ -41,8 +40,12 @@ module.exports = async function handler(req, res) {
     // Pull a reasonably-sized page; we’ll sort locally by createdOn
     q.set("limit", "50");
 
-    const data = await swGet(`/waivers?${q.toString()}`, apiKey);
-    const waivers = Array.isArray(data?.waivers) ? data.waivers : [];
+    const waivers = [];
+    for (const id of liabilityHistoryTemplateIds(templateId)) {
+      q.set('templateId', id);
+      const data = await swGet(`/waivers?${q.toString()}`, apiKey);
+      waivers.push(...(Array.isArray(data?.waivers) ? data.waivers : []).filter(waiver => waiver.templateId === id));
+    }
 
     // Choose the most recent by createdOn
     waivers.sort((a, b) => {

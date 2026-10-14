@@ -187,7 +187,7 @@
             <input id="reviewTechnician" type="checkbox" style="width:auto;min-height:0;margin-top:3px">
             <span>I reviewed this participant, the selected skier type, measured boot sole length, skier code, calculated DIN and any final indicator settings I entered against current shop procedures.</span>
           </label>
-          <p class="tiny">Customer details and any entered final settings will be sent. Complete Skier Code, Initial Indicator Value and Boot Sole Length manually on the waiver using the reviewed values shown here. These dropdowns are left unfilled. Blank final settings also require manual completion.</p>
+          <p class="tiny">Customer details, reviewed Skier Code, calculated Initial Indicator Value, measured Boot Sole Length and its range will be sent to the text-based waiver. Any entered final settings are copied independently. All values remain editable: compare them with this review before signing. Complete Boot Sole Type, equipment IDs and any blank final settings on the waiver.</p>
           <p class="tiny mt-3">Always verify against current ISO 11088/manufacturer charts and shop procedures.</p>
           <p id="liabilityReviewStatus" role="status" aria-live="polite" style="overflow-wrap:anywhere">Enter the measured boot sole length, then review the calculation to open the prefilled waiver.</p>
           <div class="rental-dialog-actions mt-4 flex items-center gap-3">
@@ -538,7 +538,7 @@
         const data=await response.json();
         if(!response.ok)throw new Error(data.error||'Could not open the blank liability waiver.');
         if(!StaffSession.isReady())throw new Error('Your staff session ended. Sign in again before opening a waiver.');
-        if(data.blank!==true||data.url!=='https://www.smartwaiver.com/w/a2njtmnzxs7icea9mdxff6/kiosk/')throw new Error('Unexpected blank waiver destination.');
+        if(data.blank!==true||!['https://www.smartwaiver.com/w/a2njtmnzxs7icea9mdxff6/kiosk/','https://www.smartwaiver.com/w/rrqn8ray3vbl19h2reyxrf/kiosk/'].includes(data.url))throw new Error('Unexpected blank waiver destination.');
         showToast(blankLiabilityWarning);
         if(!tab.closed)tab.location.replace(data.url);
       }catch(error){if(!tab.closed)tab.document.body.textContent=error.message;showToast(error.message);}
@@ -561,7 +561,7 @@
       tab.opener=null; tab.document.title='Preparing final waiver';
       tab.document.body.textContent='Preparing editable details. Review and correct every field before signing.';
       openingDrafts.add(key); if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
-      liabilityNotice('Preparing an unsigned waiver with supported fields. Dropdowns will require manual completion. Keep this page open; do not submit another request.');
+      liabilityNotice('Preparing an unsigned waiver with reviewed values. Keep this page open; do not submit another request.');
       const controller=new AbortController();
       const timeout=setTimeout(()=>controller.abort(),45000);
       try{
@@ -577,7 +577,7 @@
         if(url.protocol!=='https:'||!['waiver.smartwaiver.com','www.smartwaiver.com'].includes(url.hostname))throw new Error('Unexpected waiver destination.');
         const manual=Array.isArray(data.manualFields)&&data.manualFields.length
           ? ' Complete manually using these reviewed values: '+data.manualFields.map(field=>`${field.label}: ${field.value}`).join('; ')+'.'
-          : ' Complete Skier Code, Initial Indicator Value and Boot Sole Length manually using the reviewed dashboard values.';
+          : ' Compare the editable calculated references and each independent final setting with the reviewed dashboard values. Complete any remaining blank fields.';
         const warning=Array.isArray(data.skippedFields)&&data.skippedFields.length
           ? ` Not copied: ${data.skippedFields.join('; ')}. Complete and verify these fields on the waiver.` : '';
         // Keep the same unsigned draft recoverable if the staff member closed the loading tab.
@@ -592,7 +592,7 @@
           }
           window.open(url.toString(),'_blank','noopener,noreferrer');
         };
-        if(!tab.closed){tab.location.replace(url.toString());liabilityNotice('Unsigned waiver opened with partial prefill. Dropdowns are unfilled.'+manual+' Verify every field before signing. No waiver has been signed.'+warning);}
+        if(!tab.closed){tab.location.replace(url.toString());liabilityNotice('Unsigned waiver opened with editable prefilled values.'+manual+' Verify every field before signing. No waiver has been signed.'+warning);}
         else liabilityNotice('The loading window was closed. Reopen the same unsigned waiver without creating another draft.'+manual+' Verify every field before signing.'+warning,recover);
       }catch(error){
         if(error.name==='AbortError')error=new Error('Preparing the waiver timed out. An unsigned draft may have been created, but its link was not received. Nothing was signed. Check your connection before requesting a new draft.');

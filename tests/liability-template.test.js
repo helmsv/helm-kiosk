@@ -12,6 +12,7 @@ test('blank fallback authorizes staff, ignores request data and never contacts S
   req=request();req.method='GET';out=response();await handler(req,out);assert.equal(out.statusCode,405);assert.equal(calls.length,0);
   out=response();await handler(request(),out);assert.equal(out.statusCode,200);assert.equal(out.headers['Cache-Control'],'private, no-store');assert.deepEqual(out.body,{blank:true,url:'https://www.smartwaiver.com/w/a2njtmnzxs7icea9mdxff6/kiosk/'});assert.equal(calls.length,1);
   allowed=false;out=response();await handler(request(),out);assert.equal(out.statusCode,403);assert.equal(out.body.url,undefined);
+  allowed=true;process.env.LIABILITY_WAIVER_ID='rrqn8ray3vbl19h2reyxrf';out=response();await handler(request(),out);assert.equal(out.statusCode,200);assert.deepEqual(out.body,{blank:true,url:'https://www.smartwaiver.com/w/rrqn8ray3vbl19h2reyxrf/kiosk/'});
   allowed=true;process.env.LIABILITY_WAIVER_ID='unverified';out=response();await handler(request(),out);assert.equal(out.statusCode,503);assert.equal(out.body.url,undefined);
   global.fetch=async()=>{throw new Error('private provider error');};out=response();await handler(request(),out);assert.equal(out.statusCode,503);assert.doesNotMatch(JSON.stringify(out.body),/private provider error|https:/);
  }finally{global.fetch=oldFetch;process.env=env;}
