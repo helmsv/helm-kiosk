@@ -12,4 +12,8 @@ const finals = [
   { label: 'Final Indicator Setting: Right Toe', guid: '4iaqE8mr6v1KmHuRtJf2Uu' },
   { label: 'Final Indicator Setting: Right Heel', guid: '5vcq7mUTY11uT9Bf6wzmeh' },
 ].map(field => ({ ...field, fieldType: 'textbox', type: 'string' }));
-module.exports = { dropdowns, finals };
+const dates = [
+  { guid: 'n2PD2g3Zs5A63yF74Wh75s', label: 'Date Out', fieldType: 'datebox', type: 'date' },
+  { guid: 'jv9eoZqdVosVmeXyh2p4yZ', label: 'Date Returning', fieldType: 'datebox', type: 'date' },
+];
+module.exports = { dropdowns, finals, dates };
