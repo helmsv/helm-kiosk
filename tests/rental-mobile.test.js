@@ -76,7 +76,7 @@ test('DIN warnings precede the final action row so short-frame max scroll reveal
   const modal = tech.slice(tech.indexOf('  <!-- DIN modal -->'), tech.indexOf('  <script src="/rental-data.js">'));
   const actions = modal.indexOf('<div class="rental-dialog-actions');
   assert.ok(actions >= 0, 'the final action row is present');
-  for (const warning of ['I reviewed this participant', 'Blank final settings also require manual completion', 'Always verify against current ISO 11088/manufacturer charts']) {
+  for (const warning of ['I reviewed this participant', 'Complete Boot Sole Type, equipment IDs and any blank final settings', 'Always verify against current ISO 11088/manufacturer charts']) {
     const index = modal.indexOf(warning);
     assert.ok(index >= 0 && index < actions, `${warning} remains present before the buttons`);
   }

@@ -3,13 +3,15 @@ const sw = require('../lib/smartwaiver');
 const { requireStaff } = require('../lib/staff-auth');
 const { buildIntakePrefill, buildLiabilityPrefill, safePrefillUrl, fieldList } = require('../lib/waiver-prefill');
 const { normalizeIntake } = require('../lib/intake-normalize');
+const { TEXT_TEMPLATE_ID, liabilityTemplateId } = require('../lib/rental-templates');
+const { TEXT_FIELDS } = require('../lib/technician-text-fields');
 const templateCache = new Map();
 const OPERATIONS = new Set(['intake-read', 'intake-template', 'liability-template', 'prefill-build', 'prefill-create', 'prefill-response']);
 
 function syntheticTechnicalFields(payload, definition) {
-  // Only the fixed synthetic preview may expose these seven configuration
+  // Only the fixed synthetic preview may expose these configuration
   // destinations and its outgoing defaults. Never inspect request/source data.
-  const groups = [['Skier Code'], ['Initial Indicator Value', 'DIN'], ['Boot Sole Length (mm)'],
+  const groups = definition.templateId === TEXT_TEMPLATE_ID ? TEXT_FIELDS.map(field => [field.label]) : [['Skier Code'], ['Initial Indicator Value', 'DIN'], ['Boot Sole Length (mm)'],
     ['Final Indicator Setting: Left Toe'], ['Final Indicator Setting: Left Heel'],
     ['Final Indicator Setting: Right Toe'], ['Final Indicator Setting: Right Heel']];
   const fields = [
@@ -74,7 +76,7 @@ module.exports = async function handler(req, res) {
     if (staffStage) await requireStaff(req);
     if (input.stage === 'synthetic-preview' && input.syntheticKiosk !== undefined && typeof input.syntheticKiosk !== 'boolean') return res.status(400).json({ error: 'Choose a boolean kiosk mode for the fictional test.' });
     const intakeId = process.env.INTAKE_WAIVER_ID || process.env.INTAKE_TEMPLATE_ID;
-    const liabilityId = process.env.LIABILITY_WAIVER_ID || process.env.LIABILITY_TEMPLATE_ID || process.env.SW_TEMPLATE_LIABILITY;
+    const liabilityId = liabilityTemplateId();
     if (!intakeId || (staffStage && !liabilityId)) return res.status(503).json({ error: 'Smartwaiver templates are not configured.' });
     let draft, templateId, technicalFields;
     if(input.stage === 'template-check') {

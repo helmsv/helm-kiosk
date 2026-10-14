@@ -1,4 +1,5 @@
 const { requireStaff } = require('../lib/staff-auth');
+const { liabilityTemplateId, liabilityHistoryTemplateIds } = require('../lib/rental-templates');
 // api/open-liabilities.js
 const SW_BASE = (process.env.SW_BASE_URL || 'https://api.smartwaiver.com').replace(/\/+$/, '');
 const API_BASE = `${SW_BASE}/v4`;
@@ -75,7 +76,7 @@ module.exports = async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
 
     const key = cleanKey(process.env.SW_API_KEY);
-    const liabilityId = process.env.LIABILITY_WAIVER_ID;
+    const liabilityId = liabilityTemplateId();
     if (!key || !liabilityId) {
       return res.status(200).json({ rows: [], error: 'Missing Smartwaiver env (SW_API_KEY / LIABILITY_WAIVER_ID)' });
     }
@@ -91,8 +92,17 @@ module.exports = async function handler(req, res) {
     if (fromDts) qs.set('fromDts', fromDts);
     if (toDts)   qs.set('toDts', toDts);
 
-    const payload = await swGet(`/waivers?${qs.toString()}`, key);
-    const waivers = Array.isArray(payload?.waivers) ? payload.waivers : [];
+    // Keep already-signed original agreements visible across the template
+    // switch, including source tags used to reconcile pending intakes.
+    const waiversById = new Map();
+    for (const id of liabilityHistoryTemplateIds(liabilityId)) {
+      qs.set('templateId', id);
+      const payload = await swGet(`/waivers?${qs.toString()}`, key);
+      for (const waiver of Array.isArray(payload?.waivers) ? payload.waivers : []) {
+        if (waiver.templateId === id && (waiver.waiverId || waiver.id)) waiversById.set(waiver.waiverId || waiver.id, waiver);
+      }
+    }
+    const waivers = [...waiversById.values()];
 
     // Minimal fields front-end uses for reconciliation + normalized timestamp
     const rows = waivers.map(w => ({

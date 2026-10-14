@@ -74,5 +74,10 @@ test('specific untransferred field labels remain visible as text for staff revie
 test('partial prefill retains exact reviewed manual references without claiming dropdown transfer',async()=>{
  const manualFields=[{label:'Skier Code',value:'M'},{label:'Initial Indicator Value',value:'7'},{label:'Boot Sole Length (mm)',value:'315'}];
  const h=harness(()=>({ok:true,status:200,json:async()=>({url:'https://waiver.smartwaiver.com/p/fictional/',manualFields})}));await h.open();
- const text=h.get('liabilityOpenStatus').textContent;assert.match(text,/partial prefill/);assert.match(text,/Dropdowns are unfilled/);assert.match(text,/Skier Code: M; Initial Indicator Value: 7; Boot Sole Length \(mm\): 315/);assert.match(text,/No waiver has been signed/);
+ const text=h.get('liabilityOpenStatus').textContent;assert.match(text,/Complete manually using these reviewed values/);assert.match(text,/Skier Code: M; Initial Indicator Value: 7; Boot Sole Length \(mm\): 315/);assert.match(text,/No waiver has been signed/);
+});
+
+test('text prefill without manual references directs staff to review editable values, not reenter transferred fields',async()=>{
+ const h=harness(()=>({ok:true,status:200,json:async()=>({url:'https://waiver.smartwaiver.com/p/fictional/',manualFields:[]})}));await h.open();
+ const text=h.get('liabilityOpenStatus').textContent;assert.match(text,/editable calculated references/);assert.match(text,/each independent final setting/);assert.doesNotMatch(text,/Dropdowns are unfilled|Complete Skier Code/);
 });

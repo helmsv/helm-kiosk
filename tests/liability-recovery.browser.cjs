@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'..');
 const files=['/tech.html','/nav.js','/nav.css','/rental-mobile.css','/rental-data.js','/rental-dialog.js'];
-const destination='https://www.smartwaiver.com/w/a2njtmnzxs7icea9mdxff6/kiosk/';
+const destination='https://www.smartwaiver.com/w/rrqn8ray3vbl19h2reyxrf/kiosk/';
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH});
  const context=await browser.newContext();const errors=[],unexpected=[],calls=[];let blankStatus=200,prefillStatus=502,prefillError='Unable to prepare Smartwaiver right now. [prefill-create; HTTP 400]';
