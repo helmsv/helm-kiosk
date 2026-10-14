@@ -4,11 +4,8 @@ const INTAKE = 'synthetic_intake_template', LIABILITY = 'synthetic_liability_tem
 require('./fixtures/technician-enum-contract')([LIABILITY]);
 const AUTH = 'https://helm-snowos.vercel.app/api/rentals/authorize';
 const PRIVATE = 'REQUEST_CUSTOMER_VALUE_MUST_NOT_APPEAR';
-const defs = [
-  { label: 'Skier Code', guid: '5ktkNvPGcPnv4o2ea9jBuv' },
-  { label: 'Initial Indicator Value', guid: 'k26zGhNRXqxW4AamXpHUEx' },
-  { label: 'Boot Sole Length (mm)', guid: 'cVR22k9ALMuAs6EtVsau14' },
-].map(field => ({ ...field, fieldType: 'optionlist', type: 'enum', extra: PRIVATE }));
+const { dropdowns, finals } = require('./fixtures/rental-technical-fields');
+const defs = [...dropdowns, ...finals].map(field => ({ ...field, extra: PRIVATE }));
 const req = (body, authorization = 'Bearer synthetic.staff.session') => ({ method: 'POST', headers: { host: 'kiosk.example', origin: 'https://kiosk.example', 'content-type': 'application/json', ...(authorization ? { authorization } : {}) }, body });
 const res = () => ({ headers: {}, statusCode: 200, setHeader(k, v) { this.headers[k] = v; }, status(n) { this.statusCode = n; return this; }, json(body) { this.body = body; return this; } });
 const ok = body => ({ ok: true, status: 200, json: async () => body });
@@ -22,7 +19,7 @@ async function scenario(action, { scope = 'participant', rejected = false, provi
   delete require.cache[require.resolve('../api/waiver-prefill')];
   const handler = require('../api/waiver-prefill');
   const calls = [], payloads = [];
-  const extra = [{ label: PRIVATE, guid: 'unrelated_private_field', fieldType: 'textbox', type: 'string' }, { label: 'Final Indicator Setting: Left Toe', guid: 'left_toe_not_requested', fieldType: 'textbox', type: 'string' }];
+  const extra = [{ label: PRIVATE, guid: 'unrelated_private_field', fieldType: 'textbox', type: 'string' }];
   const final = metadata || { templateId: LIABILITY, publishedVersion: 1, [scope === 'participant' ? 'customParticipantFields' : 'customFields']: [...defs, ...extra], unrelated: PRIVATE };
   global.fetch = async (url, options = {}) => {
     if (url === AUTH) { calls.push('authorize'); return rejected ? { ok: false, status: 403 } : ok({ authorized: true }); }
@@ -45,9 +42,9 @@ async function scenario(action, { scope = 'participant', rejected = false, provi
   finally { global.fetch = oldFetch; process.env = oldEnv; }
 }
 
-test('synthetic diagnostics expose exactly the actual three outgoing defaults and exact metadata scope', async () => {
+test('synthetic diagnostics expose exactly the actual four outgoing final values and three manual references and exact metadata scope', async () => {
   for (const scope of ['participant', 'waiver']) await scenario(async ({ run, calls, payloads }) => {
-    const out = await run({ stage: 'synthetic-preview', waiverId: PRIVATE, first_name: PRIVATE, email: PRIVATE, participants: [{ firstName: PRIVATE }], technicianReview: { calculated: { skierCode: PRIVATE } }, technicalFields: [{ label: PRIVATE, guid: PRIVATE, value: PRIVATE }], templateId: PRIVATE });
+    const out = await run({ stage: 'synthetic-preview', waiverId: PRIVATE, first_name: PRIVATE, email: PRIVATE, participants: [{ firstName: PRIVATE }], technicianReview: { calculated: { skierCode: PRIVATE }, finalSettings: { leftToe: PRIVATE, leftHeel: PRIVATE, rightToe: PRIVATE, rightHeel: PRIVATE } }, finalSettings: { leftToe: PRIVATE }, technicalFields: [{ label: PRIVATE, guid: PRIVATE, value: PRIVATE }], templateId: PRIVATE });
     assert.equal(out.statusCode, 200, out.body.error);
     assert.equal(out.headers['Cache-Control'], 'private, no-store');
     assert.equal(calls.includes('signed-read'), false);
@@ -55,12 +52,14 @@ test('synthetic diagnostics expose exactly the actual three outgoing defaults an
     assert.equal(payloads.length, 1);
     assert.equal(payloads[0].participants[0].firstName, 'SnowOS');
     const values = scope === 'participant' ? payloads[0].participants[0].customFields : payloads[0].customWaiverFields;
-    assert.deepEqual(out.body.technicalFields, defs.map(({ label, guid, fieldType, type }) => ({ label, guid, scope, value: values[guid], fieldType, type })));
-    assert.deepEqual(out.body.technicalFields.map(field => field.value), ['M', '7', '315']);
+    assert.deepEqual(out.body.technicalFields, finals.map(({ label, guid, fieldType, type }) => ({ label, guid, scope, value: values[guid], fieldType, type })));
+    assert.deepEqual(out.body.technicalFields.map(field => field.value), ['6.25', '6.50', '5.75', '6.00']);
     assert.equal(JSON.stringify(out.body.technicalFields).includes(PRIVATE), false);
     assert.equal(JSON.stringify(payloads).includes(PRIVATE), false);
     for (const field of out.body.technicalFields) assert.deepEqual(Object.keys(field), ['label', 'guid', 'scope', 'value', 'fieldType', 'type']);
-    assert.equal(out.body.technicalFields.some(field => field.guid === 'left_toe_not_requested'), false);
+    assert.equal(Object.keys(values).length, 4);
+    assert.deepEqual(out.body.manualFields.map(x=>x.value), ['M','7','315']);
+    for(const field of dropdowns) assert.equal(Object.hasOwn(values,field.guid),false);
   }, { scope });
 });
 
@@ -104,8 +103,21 @@ test('the verified DIN alias is reported using its exact metadata label', async 
   await scenario(async ({ run }) => {
     const out = await run({ stage: 'synthetic-preview' });
     assert.equal(out.statusCode, 200);
-    assert.equal(out.body.technicalFields[1].label, 'DIN');
+    assert.equal(out.body.manualFields[1].label, 'DIN');
   }, { metadata: { templateId: LIABILITY, publishedVersion: 1, customParticipantFields: fields } });
+});
+
+test('seven-field fictional preview refuses missing final destinations before creating any draft', async () => {
+  for (const final of finals) await scenario(async ({ run, calls, payloads }) => {
+    const out = await run({ stage: 'synthetic-preview' });
+    assert.equal(out.statusCode, 400);
+    assert.match(out.body.error, /is missing/);
+    assert.equal(out.body.error.includes(final.label), true);
+    assert.equal(calls.includes('signed-read'), false);
+    assert.equal(calls.includes('create'), false);
+    assert.deepEqual(payloads, []);
+    assert.equal(Object.hasOwn(out.body, 'technicalFields'), false);
+  }, { metadata: { templateId: LIABILITY, publishedVersion: 1, customParticipantFields: defs.filter(field => field.guid !== final.guid) } });
 });
 
 test('missing and denied staff sessions cannot retrieve synthetic diagnostics or call provider', async () => {

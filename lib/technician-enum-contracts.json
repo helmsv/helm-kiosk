@@ -1,9 +1,9 @@
 [
   {
     "templateId": "a2njtmnzxs7icea9mdxff6",
-    "publishedVersion": 1051919,
-    "verifiedOn": "2026-10-02",
-    "evidence": "Unsigned final form native select-one option values captured by QA; option values equal displayed text. No signed customer data used.",
+    "publishedVersion": 1616022,
+    "verifiedOn": "2026-10-14",
+    "evidence": "Read-only Smartwaiver template API confirmed template ID, publishedVersion 1616022 and participant GUID/types; the published unsigned form DOM confirmed exact dropdown values/text on 2026-10-14. Evidence: original-api-template-metadata.json and published-template-routing-verification.json. No signed customer data used.",
     "fields": [
       {
         "label": "Skier Code",
@@ -24,8 +24,8 @@
         "fieldType": "optionlist",
         "type": "enum",
         "serialization": "inclusive-integer-range",
-        "values": ["231-250", "251-270", "271-290", "291-310", "311-330", "331-350", ">=351"],
-        "excludedPlaceholders": ["Please Select...", ""]
+        "values": ["≤230", "231–250", "251–270", "271–290", "291–310", "311–330", "331–350", "≥351"],
+        "excludedPlaceholders": ["Please Select...", "-9999998723", ""]
       }
     ]
   }

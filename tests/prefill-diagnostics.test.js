@@ -45,6 +45,52 @@ function assertPrivate(out) {
   assert.deepEqual(Object.keys(out.body), ['error']);
 }
 
+test('staff template-check rereads both publications and field IDs without disclosing other metadata', () => environment(async () => {
+  delete require.cache[require.resolve('../api/waiver-prefill')];
+  const handler = require('../api/waiver-prefill');
+  let version = 1, rejectedTemplate = '', authorized = true;
+  const metadataReads = { [INTAKE]: 0, [LIABILITY]: 0 };
+  global.fetch = async url => {
+    if (url === AUTH) return authorized ? success({ authorized: true }) : failure(403);
+    const id = [INTAKE, LIABILITY].find(id => url.endsWith(`/templates/${id}?customFields=true`));
+    assert.ok(id, 'Template-check never fetches signed records or creates prefills');
+    metadataReads[id] += 1;
+    if (id === rejectedTemplate) return failure(503);
+    const field = { guid: `synthetic_field_v${version}`, label: 'Synthetic question', fieldType: 'textbox', type: 'string', secretExtra: SECRET };
+    return success({ template: { templateId: id, title: 'Synthetic template', publishedVersion: version, customParticipantFields: [field], customFields: [field], privateExtra: SECRET } });
+  };
+  const run = async () => { const out = response(); await handler(request({ stage: 'template-check' }), out); return out; };
+  let out = await run();
+  assert.equal(out.statusCode, 200);
+  version = 2;
+  out = await run();
+  assert.equal(out.statusCode, 200);
+  assert.deepEqual(metadataReads, { [INTAKE]: 2, [LIABILITY]: 2 }, 'No clock advance: both reads must bypass the warm cache');
+  assert.deepEqual(out.body.templates.map(definition => definition.templateId), [INTAKE, LIABILITY]);
+  for (const definition of out.body.templates) {
+    assert.deepEqual(Object.keys(definition), ['templateId', 'title', 'publishedVersion', 'participantFields', 'waiverFields']);
+    assert.ok([INTAKE, LIABILITY].includes(definition.templateId));
+    assert.equal(definition.publishedVersion, 2);
+    const expected = { guid: 'synthetic_field_v2', label: 'Synthetic question', fieldType: 'textbox', type: 'string' };
+    assert.deepEqual(definition.participantFields, [expected]);
+    assert.deepEqual(definition.waiverFields, [expected]);
+  }
+  assert.equal(out.headers['Cache-Control'], 'private, no-store');
+  assert.equal(JSON.stringify(out.body).includes(SECRET), false);
+  for (const id of [INTAKE, LIABILITY]) {
+    rejectedTemplate = id;
+    out = await run();
+    assert.equal(out.statusCode, 502);
+    assertPrivate(out);
+  }
+  const before = { ...metadataReads };
+  authorized = false;
+  out = await run();
+  assert.equal(out.statusCode, 403);
+  assert.deepEqual(metadataReads, before, 'Unauthorized callers cannot obtain GUIDs or trigger metadata reads');
+  assertPrivate(out);
+}));
+
 // Reloading the handler resets its private template cache for every case.
 async function invoke({ phase, providerStatus = 402, mode = 'http', auth = true, authorized = true, rejectSecondAuth = false, body } = {}) {
   delete require.cache[require.resolve('../api/waiver-prefill')];
@@ -169,7 +215,7 @@ test('validation and missing/denied staff authorization retain existing status a
   assertPrivate(out);
 }));
 
-test('both draft stages refresh destination metadata and reject publication changes before creating a reviewed prefill', async () => environment(async () => {
+test('both draft stages refresh destination metadata and omit dropdowns independently of old enum publication contracts', async () => environment(async () => {
   const { normalizeIntake } = require('../lib/intake-normalize');
   const waiver = { waiverId: WAIVER, templateId: INTAKE, email: 'private@example.invalid', participants: [{
     firstName: 'Synthetic', lastName: 'Example', dob: '1990-01-01', isMinor: false,
@@ -200,6 +246,7 @@ test('both draft stages refresh destination metadata and reject publication chan
           { guid: 'synthetic_code', label: 'Skier Code', fieldType: 'textbox', type: 'string' },
           { guid: 'synthetic_din', label: 'DIN', fieldType: 'optionlist', type: 'enum' },
           { guid: 'synthetic_bsl', label: 'Boot Sole Length (mm)', fieldType: 'numerictextbox', type: 'number' },
+          ...require('./fixtures/rental-technical-fields').finals,
         ] } });
       }
       assert.ok(url.includes(INTAKE));
@@ -216,21 +263,19 @@ test('both draft stages refresh destination metadata and reject publication chan
     assert.equal(prefillPosts, 1);
     publishedVersion = 2;
     out = await run({ stage: 'template-check' });
-    assert.equal(out.body.templates[1].publishedVersion, 1, 'Read-only template-check may retain its cache');
-    assert.equal(metadataReads, 2);
-    out = await run(body);
-    assert.equal(out.statusCode, 400);
-    assert.match(out.body.error, /dropdown choices are not verified for this template version/);
-    assert.ok(out.body.error.endsWith('[prefill-build]'));
+    assert.equal(out.body.templates[1].publishedVersion, 2, 'Staff template-check must reflect the newly published version');
     assert.equal(metadataReads, 3);
-    assert.equal(prefillPosts, 1, 'Changed publication must fail before any new prefill POST');
-    assertPrivate(out);
+    out = await run(body);
+    assert.equal(out.statusCode, 200);
+    assert.deepEqual(out.body.manualFields, [{label:'DIN',value:'7'}]);
+    assert.equal(metadataReads, 4);
+    assert.equal(prefillPosts, 2, 'Omitted dropdowns do not require serializing an enum contract');
     rejectMetadata = true;
     out = await run(body);
     assert.equal(out.statusCode, 502);
     assert.ok(out.body.error.endsWith('[liability-template; HTTP 503]'));
-    assert.equal(metadataReads, 4);
-    assert.equal(prefillPosts, 1, 'Fresh-fetch failure must never fall back to cached metadata');
+    assert.equal(metadataReads, 5);
+    assert.equal(prefillPosts, 2, 'Fresh-fetch failure must never fall back to cached metadata');
     assertPrivate(out);
     if (stage === 'synthetic-preview') assert.equal(signedReads, 0);
   }
