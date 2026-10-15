@@ -25,7 +25,7 @@ test('text agreement copies eight independent reviewed strings, Pacific dates, i
   const fields = out.payload.participants[0].customFields;
   assert.deepEqual([...references, ...finals].map(f => fields[f.guid]), ['M', '7', '315', '311-330', '6.25', '6.50', '5.75', '6.00']);
   assert.equal(Object.keys(fields).length, 8);
-  assert.deepEqual(out.payload.customWaiverFields, { [dates[0].guid]: '2026-10-13', [dates[1].guid]: '2027-03-16' });
+  assert.deepEqual(out.payload.customWaiverFields, { [dates[0].guid]: '2026-10-13', [dates[1].guid]: '2027-05-16' });
   assert.deepEqual(out.manualFields, []);
   assert.equal(out.payload.externalId, 'intake_synthetic_text_rental_0');
   assert.equal(out.payload.participants[0].dob, '1990-01-01');
