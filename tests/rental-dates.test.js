@@ -17,7 +17,7 @@ test('Date Out follows Pacific midnight, year boundaries and DST; return date st
     ['2027-03-14T09:59:59.999Z', '2027-03-14'], ['2027-03-14T10:00:00.000Z', '2027-03-14'],
     ['2026-11-01T08:59:59.999Z', '2026-11-01'], ['2026-11-01T09:00:00.000Z', '2026-11-01'],
   ];
-  for (const [timestamp, dateOut] of boundaries) assert.deepEqual(rentalDates(new Date(timestamp)), { dateOut, dateReturning: '2027-03-16' }, timestamp);
+  for (const [timestamp, dateOut] of boundaries) assert.deepEqual(rentalDates(new Date(timestamp)), { dateOut, dateReturning: '2027-05-16' }, timestamp);
 });
 
 test('final waiver replaces stale intake dates without changing signed data or DIN/manual workflow', () => {
@@ -27,7 +27,7 @@ test('final waiver replaces stale intake dates without changing signed data or D
   const review = { reviewed: true, waiverId: w.waiverId, participantIndex: 0, participant: { first_name: p.first_name, last_name: p.last_name }, source: { weight_lb: p.weight_lb, height_in: p.height_in, age: p.age, skier_type: p.skier_type }, calculated: { skierCode: 'M', din: '7', bootSoleLengthMm: 315 }, finalSettings: { leftToe: '6.25', leftHeel: '6.50', rightToe: '5.75', rightHeel: '6.00' } };
   const before = JSON.stringify({ w, t, review });
   const result = buildLiabilityPrefill(w, t, t, 0, review, at('2026-10-14T06:59:59Z'));
-  assert.deepEqual(result.payload.customWaiverFields, { [DATE_FIELDS[0].guid]: '2026-10-13', [DATE_FIELDS[1].guid]: '2027-03-16' });
+  assert.deepEqual(result.payload.customWaiverFields, { [DATE_FIELDS[0].guid]: '2026-10-13', [DATE_FIELDS[1].guid]: '2027-05-16' });
   assert.deepEqual(finals.map(f => result.payload.participants[0].customFields[f.guid]), ['6.25', '6.50', '5.75', '6.00']);
   for (const f of dropdowns) assert.equal(Object.hasOwn(result.payload.participants[0].customFields, f.guid), false);
   assert.deepEqual(result.manualFields.map(f => f.value), ['M', '7', '315']);
@@ -57,7 +57,7 @@ test('missing, duplicate, moved or repurposed date fields stay unfilled and repo
     const t = template(); mutate(t);
     const result = buildLiabilityPrefill(fixture(), {}, t, 0, undefined, at('2026-10-14T08:00:00Z'));
     assert.equal(result.payload.customWaiverFields, undefined);
-    assert.deepEqual(result.manualFields.map(f => f.value), ['2026-10-14', '2027-03-16']);
+    assert.deepEqual(result.manualFields.map(f => f.value), ['2026-10-14', '2027-05-16']);
     assert.equal(result.skippedFields.filter(f => f.includes('rental date field could not be verified')).length, 2);
   }
 });

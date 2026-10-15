@@ -62,7 +62,7 @@ test('original participant GUIDs receive four explicit final values and omit dro
     '4iaqE8mr6v1KmHuRtJf2Uu': '5.75',
     '5vcq7mUTY11uT9Bf6wzmeh': '6.00',
   });
-  assert.equal(result.payload.customWaiverFields.jv9eoZqdVosVmeXyh2p4yZ, '2027-03-16');
+  assert.equal(result.payload.customWaiverFields.jv9eoZqdVosVmeXyh2p4yZ, '2027-05-16');
   assert.equal(result.payload.lockdownPrefill, false);
   assert.equal(result.copiedFields.filter(value => value.includes('(technician reviewed)')).length, 4);
   assert.equal(JSON.stringify({ w, r, target }), before, 'Source, explicit review and metadata are immutable');

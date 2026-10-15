@@ -115,7 +115,7 @@ include API keys, staff tokens, signed-customer identifiers or private URLs.
 
 New unsigned prefills for either verified rental agreement populate **Date Out**
 with the current date in `America/Los_Angeles` when the server creates the draft.
-**Date Returning** is fixed to **March 16, 2027**. Dates are sent as `YYYY-MM-DD`
+**Date Returning** is fixed to **May 16, 2027**. Dates are sent as `YYYY-MM-DD`
 in waiver-level custom fields; the form displays its normal readable date format.
 Reopening an existing draft preserves its dates; creating a new draft recomputes
 Date Out. Neither date is copied from an older intake or taken from the browser.
