@@ -122,13 +122,18 @@ test('signed agreement reads retain original reconciliation tags and select late
     if (url.pathname === '/api/rentals/authorize') return { ok:allowed, status:403, json:async () => ({ authorized:allowed }) };
     calls.push(url.searchParams.get('templateId'));
     const id = url.searchParams.get('templateId');
-    return { ok:true, json:async () => ({ waivers:[{ waiverId: id === ORIGINAL_TEMPLATE_ID ? 'old_signed' : 'new_signed', templateId:id, createdOn:id === ORIGINAL_TEMPLATE_ID ? '2026-10-13T10:00:00Z' : '2026-10-14T10:00:00Z', autoTag:'intake_synthetic_text_rental_0' }, { waiverId:'unrelated', templateId:'other' }] }) };
+    return { ok:true, json:async () => ({ waivers:[{ waiverId: id === ORIGINAL_TEMPLATE_ID ? 'old_signed' : 'new_signed', templateId:id, createdOn:id === ORIGINAL_TEMPLATE_ID ? '2026-10-13T10:00:00Z' : '2026-10-14T10:00:00Z', autoTag:'intake_synthetic_text_rental_0', externalId:'intake_synthetic_text_rental_0' }, { waiverId:'unrelated', templateId:'other' },
+      ...['draft', 'unsigned', 'pending'].map(status => ({ waiverId:status, templateId:id, status, createdOn:'2026-10-14T10:00:00Z' })),
+      { waiverId:'explicit_unsigned', templateId:id, signed:false }, { waiverId:'unverified', templateId:id, verified:false }
+    ] }) };
   };
   try {
     const req = { headers:{ authorization:'Bearer synthetic.staff.session' }, query:{ email:'snowos-unsigned-test@example.invalid' } };
     let out = response(); await require('../api/open-liabilities')(req,out);
     assert.equal(out.statusCode,200); assert.deepEqual(out.body.rows.map(r => r.waiverId), ['new_signed','old_signed']);
     assert.equal(out.body.rows[1].autoTag,'intake_synthetic_text_rental_0');
+    assert.ok(out.body.rows.every(row => row.signed === true));
+    assert.equal(out.body.rows[0].externalId,'intake_synthetic_text_rental_0');
     assert.deepEqual(calls,[TEXT_TEMPLATE_ID,ORIGINAL_TEMPLATE_ID]);
     out=response(); await require('../api/liability-latest')(req,out); assert.equal(out.body.row.waiverId,'new_signed');
     allowed=false; calls.length=0;

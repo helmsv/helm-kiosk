@@ -15,6 +15,18 @@ staff to that sign-in. Welcome/intake start remains public.
 
 ## Pending liability and DIN
 
+A signed final waiver linked to an exact source intake completes the pending
+work queue for that intake's rows sharing the same valid, nonempty LS ID. LS ID
+is a reusable Lightspeed customer identifier, so another intake for that customer
+stays pending. Customer-ID-only historical waivers retain conservative individual
+matching; drafts, unsigned waivers and intake-only documents never complete a
+group. This is queue completion only, not a change to signed documents,
+participant records, rental records or individual legal coverage.
+
+The technician review uses a 28px native checkbox inside a padded, clickable
+label with at least a 44px tap target. Keyboard review and review reset after
+calculation edits remain available on phones, tablets and desktop.
+
 Rows come from verified signed-intake detail, one row per participant. Age comes
 from that participant's DOB. Raw DOBs, addresses, signatures and PDFs are not
 returned in list/calculator responses. Partial loading, retries and paging are

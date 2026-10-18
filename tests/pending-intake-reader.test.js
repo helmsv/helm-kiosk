@@ -27,7 +27,7 @@ function setup(waivers, options = {}) {
   return { reader: createPendingIntakeReader({ request, now: () => time, policy: options.policy }), calls, advance(ms) { time += ms; } };
 }
 
-test('legacy and UUID Lightspeed tags survive intake prefill, signed rows and final participant linkage', async () => {
+test('legacy and UUID Lightspeed tags survive intake prefill and signed rental-group completion', async () => {
   const ids = ['legacy_123', '00000000-0000-4000-8000-000000000000', '00000000000040008000000000000000'];
   const tags = new Set();
   for (const id of ids) {
@@ -41,8 +41,8 @@ test('legacy and UUID Lightspeed tags survive intake prefill, signed rows and fi
     const rows = (await setup([signed]).reader.read(input)).rows;
     assert.ok(rows.every(row => row.lightspeed_id === id));
     const finalDraft = buildLiabilityPrefill(signed, {}, {}, 1);
-    const remaining = pendingRows(rows, [{ autoTag:finalDraft.tag, createdOn:'2026-10-02T11:00:00Z' }]);
-    assert.deepEqual(remaining.map(row => row.participant_index), [0]);
+    const remaining = pendingRows(rows, [{ waiverId:'signed_final', signed:true, autoTag:finalDraft.tag, createdOn:'2026-10-02T11:00:00Z' }]);
+    assert.deepEqual(remaining, []);
   }
   assert.equal(tags.size, ids.length, 'UUID punctuation is never stripped or encoded into a colliding tag');
 });
