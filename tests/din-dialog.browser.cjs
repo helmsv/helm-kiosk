@@ -22,6 +22,7 @@ const cases = [
   { name: 'ipad-portrait', width: 768, height: 560 },
   { name: 'phone', width: 375, height: 520 },
   { name: 'phone-wide', width: 390, height: 520 },
+  { name: 'phone-large', width: 430, height: 520 },
   { name: 'small-phone', width: 320, height: 400 },
   { name: 'short-landscape', width: 844, height: 220 }
 ];
@@ -109,9 +110,33 @@ function checkFits(result, name) {
       // Exercise the actual final action when enabled, not only the earlier
       // review checkbox that is last in the initial disabled state.
       await frame.getByLabel('Boot Sole Length (mm)', { exact: true }).fill('315');
-      await frame.locator('#reviewTechnician').check();
+      const review = frame.getByRole('checkbox', { name: /^I reviewed this participant/ });
+      const label = frame.locator('label[for="reviewTechnician"]');
+      const reviewGeometry = await label.evaluate(node => {
+        const checkbox = node.querySelector('input');
+        const labelBox = node.getBoundingClientRect(), box = checkbox.getBoundingClientRect();
+        return { labelWidth: labelBox.width, labelHeight: labelBox.height, checkboxWidth: box.width, checkboxHeight: box.height };
+      });
+      assert.ok(reviewGeometry.labelWidth >= 44 && reviewGeometry.labelHeight >= 44, `${item.name}: review tap target is at least 44px square`);
+      assert.equal(reviewGeometry.checkboxWidth, 28, `${item.name}: checkbox remains visibly large without flex shrinking`);
+      assert.equal(reviewGeometry.checkboxHeight, 28);
+      assert.equal(await review.isChecked(), false);
+      await label.locator('span').click();
+      assert.equal(await review.isChecked(), true, 'review text toggles its accessible checkbox');
       assert.equal(await frame.locator('#btnCopy').isEnabled(), true);
       assert.equal(await frame.locator('#btnOpenLiab').isEnabled(), true);
+      await label.click({ position: { x: 4, y: 12 } });
+      assert.equal(await review.isChecked(), false, 'padding outside the native checkbox is clickable');
+      assert.equal(await frame.locator('#btnOpenLiab').isEnabled(), false);
+      await review.press('Space');
+      assert.equal(await review.isChecked(), true, 'native keyboard interaction remains available');
+      await frame.locator('#inp_bsl').fill('316');
+      assert.equal(await review.isChecked(), false, 'calculation edits still reset technician review');
+      assert.equal(await frame.locator('#btnCopy').isEnabled(), false);
+      assert.equal(await frame.locator('#btnOpenLiab').isEnabled(), false);
+      await frame.locator('#inp_bsl').fill('315');
+      await label.locator('span').click();
+      await page.screenshot({ path: path.join(output, `${item.name}-review.png`) });
       await frame.locator('#dinBody').evaluate(node => { node.scrollTop = 0; });
       await frame.locator('#dinClose').press('Shift+Tab');
       assert.equal(await frame.evaluate(() => document.getElementById('dinModal').contains(document.activeElement)), true);
@@ -140,7 +165,7 @@ function checkFits(result, name) {
       assert.equal(await frame.locator('#dinModal').isVisible(), false);
       assert.equal(await frame.locator('main').evaluate(node => node.inert), false);
       assert.notEqual(await frame.evaluate(() => document.documentElement.style.overflow), 'hidden');
-      results.push({ ...item, panelHeight: initial.panel.height, bodyHeight: initial.body.height, scrollHeight: initial.scrollHeight, finalScrollTop: bottom.scrollTop });
+      results.push({ ...item, ...reviewGeometry, panelHeight: initial.panel.height, bodyHeight: initial.body.height, scrollHeight: initial.scrollHeight, finalScrollTop: bottom.scrollTop });
     }
     assert.deepEqual(unexpected, [], 'no customer/API writes or unmocked destinations');
     assert.deepEqual(errors, [], 'no JavaScript errors');

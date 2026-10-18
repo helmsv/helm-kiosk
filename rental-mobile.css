@@ -81,6 +81,36 @@
 .rental-page #dinModal .pill { display: inline-block; padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; }
 .rental-page #dinModal .rental-dialog-actions { flex-wrap: wrap; }
 
+/* The whole review label is a tap target, including the space around the
+   larger native checkbox. Keep the control from shrinking beside long text. */
+.rental-page #dinModal .rental-technician-review {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 44px;
+  min-height: 44px;
+  margin-top: 16px;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #f9fafb;
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.rental-page #dinModal #reviewTechnician {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
 /* Only page/table reflow is phone-only. Preserve iPad layouts at 640px and up. */
 @media (max-width: 639px) {
   .rental-page,

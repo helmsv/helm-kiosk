@@ -99,7 +99,11 @@ module.exports = async function handler(req, res) {
       qs.set('templateId', id);
       const payload = await swGet(`/waivers?${qs.toString()}`, key);
       for (const waiver of Array.isArray(payload?.waivers) ? payload.waivers : []) {
-        if (waiver.templateId === id && (waiver.waiverId || waiver.id)) waiversById.set(waiver.waiverId || waiver.id, waiver);
+        // /waivers?verified=true lists signed documents. Explicit draft or
+        // unsigned records must still fail closed if an upstream response mixes them in.
+        const unfinished = waiver.signed === false || waiver.verified === false || waiver.draft === true ||
+          /^(draft|unsigned|pending)$/.test(String(waiver.status || '').toLowerCase());
+        if (!unfinished && waiver.templateId === id && (waiver.waiverId || waiver.id)) waiversById.set(waiver.waiverId || waiver.id, waiver);
       }
     }
     const waivers = [...waiversById.values()];
@@ -107,12 +111,14 @@ module.exports = async function handler(req, res) {
     // Minimal fields front-end uses for reconciliation + normalized timestamp
     const rows = waivers.map(w => ({
       waiverId:  w.waiverId || w.id || '',
+      signed:    true,
       createdOn: normalizeSwDateToISO(w.createdOn || w.created || ''),
       templateId: w.templateId || '',
       email:     w.email || '',
       firstName: w.firstName || '',
       lastName:  w.lastName || '',
-      autoTag:   w.autoTag || ''
+      autoTag:   w.autoTag || '',
+      externalId: w.externalId || ''
     }));
 
     res.status(200).json({ rows, count: rows.length, from: fromDts, to: toDts });

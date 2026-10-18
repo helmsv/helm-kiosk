@@ -62,8 +62,10 @@ never equate rows=[] plus partial=true with no pending customers, and never
 silently drop earlier loaded pages. Use (waiver_id, participant_index) for merge
 keys. Preserve loaded rows on transient retrieval failures and ignore obsolete
 responses after date-range changes. Reconciliation with liability data also needs
-participant-aware review; a family's shared email/tag must not hide every sibling
-based on a single participant's completed liability.
+an exact source-intake link before completing a shared LS-ID work-queue group.
+LS ID identifies a reusable customer, so shared email/customer tags alone must
+not clear another intake or imply individual legal coverage. Unlinked historical
+waivers retain conservative individual matching.
 
 ## Bounds and operational limits
 

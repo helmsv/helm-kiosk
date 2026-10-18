@@ -33,15 +33,42 @@
     return tag;
   }
   const normalized = value => String(value || '').normalize('NFC').trim().toLowerCase();
+  const validLightspeedId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,61}$/.test(value);
   function pendingRows(intakes, liabilities, allowLegacy = false) {
+    // Only the authenticated signed-final endpoint supplies this marker. Drafts,
+    // intakes and SSE wake-ups cannot complete a pending rental themselves.
+    const signed = liabilities.filter(waiver => waiver.signed === true && typeof waiver.waiverId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(waiver.waiverId));
     const samePerson = (row, waiver) => Boolean(normalized(row.first_name) && normalized(row.last_name)) && normalized(row.first_name) === normalized(waiver.firstName) && normalized(row.last_name) === normalized(waiver.lastName);
     const timely = (row, waiver) => Number.isFinite(Date.parse(row.signed_on)) && Number.isFinite(Date.parse(waiver.createdOn)) && Date.parse(waiver.createdOn) >= Date.parse(row.signed_on);
     const legacy = (row, waiver) => samePerson(row, waiver) && timely(row, waiver) && ((normalized(row.email) && normalized(row.email) === normalized(waiver.email)) || (row.lightspeed_id && waiver.autoTag === `ls_${row.lightspeed_id}`));
+    const exactSource = (row, waiver) => {
+      try {
+        const tag = sourceTag(row.waiver_id, row.participant_index);
+        return (waiver.autoTag === tag || waiver.externalId === tag) && timely(row, waiver);
+      } catch { return false; }
+    };
+    // LS ID is a customer identifier, not a unique rental. Complete only the
+    // exact linked intake's operational group; never all intakes for a customer.
+    // This filters the work queue without changing documents or legal coverage.
+    const completedGroups = new Map();
+    for (const waiver of signed) {
+      const sources = intakes.filter(row => exactSource(row, waiver));
+      if (new Set(sources.map(row => row.waiver_id)).size !== 1) continue;
+      for (const row of sources) {
+        if (!validLightspeedId(row.lightspeed_id)) continue;
+        const key = JSON.stringify([row.waiver_id, row.lightspeed_id]);
+        completedGroups.set(key, Math.max(completedGroups.get(key) || 0, Date.parse(waiver.createdOn)));
+      }
+    }
     return intakes.filter(row => {
-      let tag; try { tag = sourceTag(row.waiver_id, row.participant_index); } catch { return true; }
-      if (liabilities.some(waiver => (waiver.autoTag === tag || waiver.externalId === tag) && timely(row, waiver))) return false;
+      try { sourceTag(row.waiver_id, row.participant_index); } catch { return true; }
+      if (validLightspeedId(row.lightspeed_id)) {
+        const completedAt = completedGroups.get(JSON.stringify([row.waiver_id, row.lightspeed_id]));
+        if (Number.isFinite(Date.parse(row.signed_on)) && completedAt >= Date.parse(row.signed_on)) return false;
+      }
+      if (signed.some(waiver => exactSource(row, waiver))) return false;
       if (!allowLegacy) return true;
-      const matches = liabilities.filter(waiver => legacy(row, waiver));
+      const matches = signed.filter(waiver => legacy(row, waiver));
       if (matches.length !== 1) return true;
       return intakes.filter(candidate => legacy(candidate, matches[0])).length !== 1;
     });
