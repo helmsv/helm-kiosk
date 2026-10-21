@@ -156,13 +156,7 @@ module.exports = async (req, res) => {
     if (r1.arr.length) {
       customer =
         r1.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-        r1.arr[0];
-    }
-
-    // 2) Fallbacks only if names were provided (optional)
-    if (!customer && (first_name || last_name)) {
-      const r2 = await tryEndpoint("Search(name)", "/search", { type: "customers", first_name, last_name });
-      if (r2.arr.length) customer = r2.arr[0];
+        null;
     }
 
     if (!customer) {
@@ -170,21 +164,21 @@ module.exports = async (req, res) => {
       if (r3.arr.length) {
         customer =
           r3.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) ||
-          r3.arr[0];
+          null;
       }
     }
 
     if (!customer) {
       const r4 = await tryEndpoint("Customers(search)", "/customers", { search: email });
       if (r4.arr.length) {
-        customer = r4.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r4.arr[0];
+        customer = r4.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || null;
       }
     }
 
     if (!customer) {
       const r5 = await tryEndpoint("Customers(email)", "/customers", { email });
       if (r5.arr.length) {
-        customer = r5.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || r5.arr[0];
+        customer = r5.arr.find(c => ((c.email || "").trim().toLowerCase() === emailLc)) || null;
       }
     }
 

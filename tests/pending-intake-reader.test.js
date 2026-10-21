@@ -31,7 +31,7 @@ test('legacy and UUID Lightspeed tags survive intake prefill and signed rental-g
   const ids = ['legacy_123', '00000000-0000-4000-8000-000000000000', '00000000000040008000000000000000'];
   const tags = new Set();
   for (const id of ids) {
-    const draft = buildIntakePrefill({ email:'fictional@example.invalid', dob:'1990-01-01', minors:false, lightspeed_id:id, mobile:'+1 (202) 555-0134' });
+    const draft = buildIntakePrefill({ first_name:'Synthetic', last_name:'Example', email:'fictional@example.invalid', dob:'1990-01-01', minors:false, lightspeed_id:id, mobile:'+1 (202) 555-0134' });
     const url = new URL(safePrefillUrl('https://waiver.smartwaiver.com/p/synthetic-test/', draft.tag, 'synthetic-test'));
     const tag = url.searchParams.get('auto_tag');
     assert.equal(tag, `ls_${id}`);
