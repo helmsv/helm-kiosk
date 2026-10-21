@@ -8,17 +8,17 @@ const waiver = participants => ({ waiverId: 'test_waiver', email: 'test@example.
 const source = { customParticipantFields: [def('sourceweight13', 'Weight'), def('sourceskier013', 'Skier Type', 'radiobuttons', 'enum')], customFields: [def('sourceaddress', 'Street address')] };
 const target = { customParticipantFields: [def('targetweight13', 'Weight'), def('targetskier013', 'Skier Type', 'radiobuttons', 'enum')], customFields: [def('targetaddress', 'Street address')] };
 
-test('welcome email and DOB prefill even when no name or customer record exists', () => {
-  const draft = buildIntakePrefill({ email: ' newcomer@example.com ', dob: '19900417', minors: false });
+test('welcome name, email and DOB prefill without a customer record', () => {
+  const draft = buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: ' newcomer@example.com ', dob: '19900417', minors: false });
   assert.equal(draft.payload.email, 'newcomer@example.com');
-  assert.deepEqual(draft.payload.participants, [{ dob: '1990-04-17' }]);
+  assert.deepEqual(draft.payload.participants, [{ firstName: 'Synthetic', lastName: 'Example', dob: '1990-04-17' }]);
   assert.equal(draft.payload.adult, true);
   assert.equal(draft.payload.lockdownPrefill, false);
   assert.equal(draft.payload.kiosk, true);
   assert.match(draft.tag, /^intake_[a-z0-9]+$/);
 });
 test('welcome family DOB belongs only to guardian, never a child', () => {
-  const draft = buildIntakePrefill({ email: 'parent@example.com', dob: '1986-10-03', minors: true, first_name: 'Parent', last_name: 'Example', lightspeed_id: '123' });
+  const draft = buildIntakePrefill({ first_name: 'Parent', last_name: 'Example', email: 'parent@example.com', dob: '1986-10-03', minors: true, lightspeed_id: '123' });
   assert.equal(draft.payload.guardian.dob, '1986-10-03');
   assert.equal(draft.payload.guardian.firstName, 'Parent');
   assert.equal(draft.payload.guardian.participant, false);
@@ -31,9 +31,9 @@ test('validates date, future dates, adult signer, email and explicit minors choi
   assert.equal(validDob('2024-02-29'), '2024-02-29');
   assert.equal(validDob('1800-01-01'), '');
   assert.equal(validDob('2999-01-01'), '');
-  assert.throws(() => buildIntakePrefill({ email: 'bad', dob: '1990-01-01', minors: false }));
-  assert.throws(() => buildIntakePrefill({ email: 'p@example.com', dob: '2020-01-01', minors: true }));
-  assert.throws(() => buildIntakePrefill({ email: 'p@example.com', dob: '1990-01-01' }));
+  assert.throws(() => buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'bad', dob: '1990-01-01', minors: false }));
+  assert.throws(() => buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'p@example.com', dob: '2020-01-01', minors: true }));
+  assert.throws(() => buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'p@example.com', dob: '1990-01-01' }));
 });
 test('adult maps full name, DOB, phone, common custom answers, address and emergency contact', () => {
   const w = { ...waiver([adult({ phone: '555-0100', customParticipantFields: { sourceweight13: { value: '174', displayText: 'Weight' }, sourceskier013: { value: 'II', displayText: 'Skier Type' } } })]), addressLineOne: '123 Example St', addressCity: 'Example City', emergencyContactName: 'Contact Example', emergencyContactPhone: '555-0101', customWaiverFields: { sourceaddress: { value: '123 Example St', displayText: 'Street address' } } };
@@ -143,11 +143,11 @@ test('display-formatted phones preserve supplied country code and digits without
 });
 test('welcome adult and guardian normalize formatted phone without blocking a draft', () => {
   for (const minors of [false, true]) {
-    const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134' });
+    const draft = buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134' });
     const person = minors ? draft.payload.guardian : draft.payload.participants[0];
     assert.equal(person.phone, minors ? undefined : '+12025550134');
     assert.equal(draft.skippedFields.length, minors ? 1 : 0);
-    const invalid = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134 ext 9' });
+    const invalid = buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'test@example.com', dob: '1990-01-01', minors, mobile: '+1 (202) 555-0134 ext 9' });
     assert.equal((minors ? invalid.payload.guardian : invalid.payload.participants[0]).phone, undefined);
     assert.equal(invalid.payload.email, 'test@example.com');
     assert.match(invalid.skippedFields[0], /Phone.*enter this phone number/);
@@ -156,12 +156,12 @@ test('welcome adult and guardian normalize formatted phone without blocking a dr
 });
 test('UUID Lightspeed IDs retain the original auto_tag without an invalid externalId', () => {
   const id = '01234567-89ab-cdef-0123-456789abcdef';
-  const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors: false, lightspeed_id: id });
+  const draft = buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'test@example.com', dob: '1990-01-01', minors: false, lightspeed_id: id });
   assert.equal(draft.tag, `ls_${id}`);
   assert.equal(draft.payload.externalId, undefined);
   const url = new URL(safePrefillUrl('https://waiver.smartwaiver.com/p/abc123/', draft.tag, 'abc123'));
   assert.equal(url.searchParams.get('auto_tag'), `ls_${id}`);
-  const compatible = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors: false, lightspeed_id: 'abc_123' });
+  const compatible = buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'test@example.com', dob: '1990-01-01', minors: false, lightspeed_id: 'abc_123' });
   assert.equal(compatible.payload.externalId, 'ls_abc_123');
 });
 test('liability normalizes each family and emergency phone without mutating signed data', () => {
@@ -197,7 +197,7 @@ test('matched Lightspeed UUID and formatted mobile produce compatible prefill to
   assert.equal(JSON.stringify(input), before);
 });
 test('customer tags are never truncated or sanitized into another customer identity', () => {
-  const base = { email: 'test@example.com', dob: '1990-01-01', minors: false };
+  const base = { first_name: 'Synthetic', last_name: 'Example', email: 'test@example.com', dob: '1990-01-01', minors: false };
   const first = buildIntakePrefill({ ...base, lightspeed_id: 'customer-id' });
   const second = buildIntakePrefill({ ...base, lightspeed_id: 'customer_id' });
   assert.notEqual(first.tag, second.tag);
@@ -209,7 +209,7 @@ test('customer tags are never truncated or sanitized into another customer ident
 
 test('malformed optional phones are omitted and audited without object coercion', () => {
   for (const mobile of [{ toString: null }, ['202', '555', '0134'], {}, true, 12025550134]) {
-    const draft = buildIntakePrefill({ email: 'test@example.com', dob: '1990-01-01', minors: false, mobile });
+    const draft = buildIntakePrefill({ first_name: 'Synthetic', last_name: 'Example', email: 'test@example.com', dob: '1990-01-01', minors: false, mobile });
     assert.equal(draft.payload.participants[0].phone, undefined);
     assert.match(draft.skippedFields[0], /Phone.*enter this phone number/);
   }

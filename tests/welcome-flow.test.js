@@ -14,7 +14,7 @@ function setup(fetchImpl) {
         classList: { add(x) { classes.add(x); }, remove(x) { classes.delete(x); }, contains(x) { return classes.has(x); } },
         addEventListener(type, fn) { this.listeners[type] = fn; }, appendChild() {},
         checkValidity() { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.value); },
-        querySelectorAll() { return ['email','dobMonth','dobDay','dobYear','minorsYes','minorsNo','continueBtn'].map(element); },
+        querySelectorAll() { return ['email','firstName','lastName','dobMonth','dobDay','dobYear','minorsYes','minorsNo','continueBtn'].map(element); },
       });
     }
     return elements.get(id);
@@ -22,7 +22,7 @@ function setup(fetchImpl) {
   const calls = [], destinations = [], windowListeners = {};
   const context = { document: { getElementById: element, createElement: () => ({}) }, window: { location: { assign(url) { destinations.push(url); } }, addEventListener(type, fn) { windowListeners[type] = fn; } }, URL, URLSearchParams, Date, console, fetch: async (url, options) => { const body=JSON.parse(options.body); calls.push({url,body}); return fetchImpl(url, body); } };
   vm.runInNewContext(script, context);
-  element('email').value = 'entered@example.com'; element('dobYear').value='1986'; element('dobMonth').value='03'; element('dobDay').value='04';
+  element('firstName').value='Entered'; element('lastName').value='Signer'; element('email').value = 'entered@example.com'; element('dobYear').value='1986'; element('dobMonth').value='03'; element('dobDay').value='04';
   return { element, calls, destinations, windowListeners, submit: () => element('startForm').listeners.submit({ preventDefault() {} }), click: id => element(id).listeners.click() };
 }
 const good = data => ({ok:true, json:async()=>data});
@@ -34,7 +34,7 @@ test('no-match path preserves welcome email and date in API request', async () =
   assert.equal(app.calls.length,2);
   assert.equal(app.calls[1].body.email,'entered@example.com');
   assert.equal(app.calls[1].body.dob,'1986-03-04');
-  assert.equal(app.calls[1].body.first_name,'');
+  assert.equal(app.calls[1].body.first_name,'Entered');
   assert.equal(app.destinations.length,1);
   assert.equal(app.element('continueBtn').disabled,true,'stay disabled until navigation');
   app.windowListeners.pageshow();
@@ -44,14 +44,14 @@ test('lookup failure still creates editable prefill with welcome details', async
   const app=setup(async url=>{if(url==='/api/lookup')throw new Error('offline');return good(link);});
   await app.submit();assert.equal(app.calls[1].body.email,'entered@example.com');assert.equal(app.calls[1].body.dob,'1986-03-04');
 });
-test('confirmed match uses entered email and DOB rather than stale Lightspeed values', async () => {
+test('confirmed match uses entered name, email and DOB rather than stale Lightspeed values', async () => {
   const app=setup(async url=>good(url==='/api/lookup'?{match_quality:'exact',first_name:'Confirmed',last_name:'Adult',email:'old@example.com',date_of_birth:'1970-01-01',lightspeed_id:'123'}:link));
   await app.submit(); assert.equal(app.calls.length,1); assert.equal(app.element('confirmCard').classList.contains('hidden'),false);
-  await app.click('btnYes'); assert.equal(app.calls[1].body.email,'entered@example.com'); assert.equal(app.calls[1].body.dob,'1986-03-04'); assert.equal(app.calls[1].body.first_name,'Confirmed');
+  await app.click('btnYes'); assert.equal(app.calls[1].body.email,'entered@example.com'); assert.equal(app.calls[1].body.dob,'1986-03-04'); assert.equal(app.calls[1].body.first_name,'Entered');
 });
 test('Not me discards record identity and keeps welcome data', async () => {
-  const app=setup(async url=>good(url==='/api/lookup'?{match_quality:'partial',first_name:'Wrong',lightspeed_id:'123'}:link));
-  await app.submit(); await app.click('btnNotMe'); assert.equal(app.calls[1].body.first_name,'');assert.equal(app.calls[1].body.lightspeed_id,'');assert.equal(app.calls[1].body.dob,'1986-03-04');
+  const app=setup(async url=>good(url==='/api/lookup'?{match_quality:'exact',first_name:'Wrong',lightspeed_id:'123'}:link));
+  await app.submit(); await app.click('btnNotMe'); assert.equal(app.calls[1].body.first_name,'Entered');assert.equal(app.calls[1].body.lightspeed_id,'');assert.equal(app.calls[1].body.dob,'1986-03-04');
 });
 test('changing welcome input invalidates an old match', async () => {
   const app=setup(async()=>good({match_quality:'exact',first_name:'Old'}));
@@ -78,4 +78,21 @@ test('invalid calendar dates and underage signer are blocked before lookup', asy
   const app=setup(async()=>good({}));
   app.element('dobMonth').value='02';app.element('dobDay').value='30';await app.submit();assert.equal(app.calls.length,0);
   app.element('dobYear').value='2020';app.element('dobMonth').value='01';app.element('dobDay').value='01';await app.submit();assert.equal(app.calls.length,0);assert.match(app.element('status').textContent,/adult signer/);
+});
+test('missing or whitespace-only signer names are blocked before lookup or prefill', async () => {
+  for (const id of ['firstName', 'lastName']) {
+    const app = setup(async () => assert.fail('No request without a complete signer name'));
+    app.element(id).value = '   ';
+    await app.submit();
+    assert.equal(app.calls.length, 0);
+    assert.match(app.element('status').textContent, /first and last name/);
+  }
+});
+test('partial lookup cannot carry an unrelated customer identity into the draft', async () => {
+  const app = setup(async url => good(url === '/api/lookup' ? {match_quality:'partial',first_name:'Unrelated',lightspeed_id:'wrong_customer'} : link));
+  await app.submit();
+  assert.equal(app.element('confirmCard').classList.contains('hidden'), true);
+  assert.equal(app.calls[1].body.first_name, 'Entered');
+  assert.equal(app.calls[1].body.last_name, 'Signer');
+  assert.equal(app.calls[1].body.lightspeed_id, '');
 });

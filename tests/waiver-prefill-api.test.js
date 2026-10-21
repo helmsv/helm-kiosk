@@ -8,6 +8,16 @@ const waiver={waiverId:'synthetic_intake_001',templateId:'intake_template',email
 const definitions={intake_template:{templateId:'intake_template',title:'Synthetic intake',customParticipantFields:[]},liability_template:{templateId:'liability_template',publishedVersion:1,title:'Synthetic final',customFields:[{guid:'code_target',label:'Skier Code',fieldType:'textbox',type:'string'},{guid:'din_target',label:'DIN',fieldType:'optionlist',type:'enum'},{guid:'bsl_target',label:'Boot Sole Length (mm)',fieldType:'numerictextbox',type:'number'}]}};
 definitions.liability_template.customFields.push(...require('./fixtures/rental-technical-fields').finals);
 const review=()=>{const p=normalizeIntake(waiver).participants[0];return{reviewed:true,waiverId:waiver.waiverId,participantIndex:0,participant:{first_name:p.first_name,last_name:p.last_name},source:{weight_lb:p.weight_lb,height_in:p.height_in,age:p.age,skier_type:p.skier_type},calculated:{skierCode:'M',din:7,bootSoleLengthMm:315}}};
+test('public intake rejects missing signer names before any provider call', async () => {
+ const oldFetch=global.fetch,env={...process.env};process.env.INTAKE_WAIVER_ID='intake_template';
+ global.fetch=async()=>assert.fail('Missing names must not reach Smartwaiver');
+ try {
+  for (const minors of [false,true]) for (const names of [{},{first_name:'Synthetic'},{first_name:' ',last_name:'Example'}]) {
+   const out=res();await require('../api/waiver-prefill')(req({stage:'intake',email:'synthetic@example.invalid',dob:'1990-01-01',minors,...names}),out);
+   assert.equal(out.statusCode,400);assert.match(out.body.error,/first and last name/);
+  }
+ } finally {global.fetch=oldFetch;process.env=env;}
+});
 test('protected prefill/metadata lifecycle and synthetic preview never bypass staff or edit a signed waiver',async()=>{
  const oldFetch=global.fetch,env={...process.env};process.env.SW_API_KEY='server-only-synthetic';process.env.INTAKE_WAIVER_ID='intake_template';process.env.LIABILITY_WAIVER_ID='liability_template';
  delete require.cache[require.resolve('../api/waiver-prefill')];const handler=require('../api/waiver-prefill');

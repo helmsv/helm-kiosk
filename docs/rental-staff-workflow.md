@@ -181,6 +181,17 @@ The production Vercel project is `helm-kiosk` (repo root), embedded by SnowOS at
 unchanged. Refresh existing SnowOS rental tabs after rollout. Verify configured
 metadata and a fresh unsigned synthetic preview through the authenticated iframe.
 
+### Welcome intake names
+
+Waiver Start requires the adult signer’s first and last name along with email
+and adult DOB, including when signing for minors. The live Smartwaiver prefill
+endpoint rejects a participant without a first name with HTTP 400 despite its
+reference marking that field optional. Missing names are now rejected locally
+before the provider call; placeholders are never supplied. Entered names, email
+and DOB remain authoritative after confirming a Lightspeed match. Lookup accepts
+only a matching email, so an unfiltered result list cannot attach an unrelated
+customer ID. No signed record is created or changed by opening an intake draft.
+
 For rollback, restore production `LIABILITY_WAIVER_ID` to
 `a2njtmnzxs7icea9mdxff6` and deploy the prior known-good release. Restoring the
 setting is essential for subsequent deployments; reverting only the code would

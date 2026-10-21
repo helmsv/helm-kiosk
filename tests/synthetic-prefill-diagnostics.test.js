@@ -149,7 +149,7 @@ test('diagnostics are absent from liability, template-check, public intake and a
   global.fetch = async () => ok({ prefill: { uuid: 'synthetic_token', url: 'https://waiver.smartwaiver.com/p/synthetic_token/' } });
   try {
     const out = res();
-    await require('../api/waiver-prefill')(req({ stage: 'intake', email: 'test@example.invalid', dob: '1990-01-01', minors: false, technicalFields: [PRIVATE] }, ''), out);
+    await require('../api/waiver-prefill')(req({ stage: 'intake', first_name: 'Synthetic', last_name: 'Example', email: 'test@example.invalid', dob: '1990-01-01', minors: false, technicalFields: [PRIVATE] }, ''), out);
     assert.equal(out.statusCode, 200);
     assert.equal(Object.hasOwn(out.body, 'technicalFields'), false);
   } finally { global.fetch = oldFetch; process.env = oldEnv; }

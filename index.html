@@ -28,6 +28,19 @@
                    class="mt-1 w-full rounded-xl border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-black" />
           </div>
 
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="firstName" class="block text-sm font-medium">Adult signer’s first name</label>
+              <input id="firstName" type="text" required autocomplete="given-name" maxlength="100"
+                     class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+            </div>
+            <div>
+              <label for="lastName" class="block text-sm font-medium">Adult signer’s last name</label>
+              <input id="lastName" type="text" required autocomplete="family-name" maxlength="100"
+                     class="mt-1 w-full rounded-xl border border-gray-300 p-3" />
+            </div>
+          </div>
+
           <!-- DOB belongs to the adult signer, including on family waivers. -->
           <div>
             <label class="block text-sm font-medium mb-1">Adult signer’s date of birth</label>
@@ -82,7 +95,7 @@
         <!-- CONFIRM CARD (shown if Lightspeed match found) -->
         <div id="confirmCard" class="hidden mt-6 border border-gray-200 rounded-2xl p-5">
           <h2 class="text-lg font-semibold">We found your record</h2>
-          <p class="text-sm text-gray-600 mt-1">Please confirm this is the adult who will sign. Your entered email and date of birth will be used.</p>
+          <p class="text-sm text-gray-600 mt-1">Please confirm this is the adult who will sign. Your entered name, email and date of birth will be used.</p>
           <dl class="mt-4 grid grid-cols-1 gap-3">
             <div>
               <dt class="text-xs text-gray-500">Name</dt>
@@ -199,8 +212,11 @@
       }
       function welcomeDetails() {
         const email = document.getElementById('email').value.trim();
+        const first_name = document.getElementById('firstName').value.trim();
+        const last_name = document.getElementById('lastName').value.trim();
         const compact = dobYyyymmddFromSelects();
         if (!email || !document.getElementById('email').checkValidity()) throw new Error('Please enter a valid email address.');
+        if (!first_name || !last_name) throw new Error('Please enter the adult signer’s first and last name.');
         if (!compact) throw new Error('Please select a valid Date of Birth.');
         const dob = `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
         const now = new Date();
@@ -208,7 +224,7 @@
         let age = now.getUTCFullYear() - birthday.getUTCFullYear();
         if (now.getUTCMonth() < birthday.getUTCMonth() || (now.getUTCMonth() === birthday.getUTCMonth() && now.getUTCDate() < birthday.getUTCDate())) age--;
         if (age < 18) throw new Error('Please enter the adult signer’s date of birth. A parent or guardian must sign for minors.');
-        return { email, dob, minors: isMinorsYes() };
+        return { email, first_name, last_name, dob, minors: isMinorsYes() };
       }
       async function startIntake(welcome, record = {}) {
         setStatus('Preparing your intake. You can review and correct the details before signing…');
@@ -217,7 +233,6 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             stage: 'intake', ...welcome,
-            first_name: record.first_name || '', last_name: record.last_name || '',
             mobile: record.mobile || '', lightspeed_id: record.lightspeed_id || ''
           })
         });
@@ -262,7 +277,7 @@
             });
             if (res.ok) data = await res.json();
           } catch { /* A customer lookup outage must not discard welcome details. */ }
-          if (data.match_quality === 'exact' || data.match_quality === 'partial') {
+          if (data.match_quality === 'exact') {
             lastLookup = data;
             document.getElementById('c_name').textContent = `${data.first_name || ''} ${data.last_name || ''}`.trim() || '—';
             document.getElementById('c_email').textContent = data.email || '—';
